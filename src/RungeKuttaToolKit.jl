@@ -975,7 +975,8 @@ end
 
 function backprop_butcher_weights!(u::Matrix{T}, A::Matrix{T}, b::Vector{T},
         m::Matrix{T}, p::Vector{T}, children::Vector{Int},
-        siblings::Vector{Vector{Tuple{Int,Int}}}) where {T <: Number}
+        joined_siblings::Vector{Tuple{Int,Int}},
+        sibling_indices::Vector{Pair{Int,Int}}) where {T <: Number}
     num_stages, num_constrs = size(u, 1), size(u, 2)
     @inbounds for r = 0 : num_constrs - 1
         i = num_constrs - r
@@ -991,12 +992,15 @@ function backprop_butcher_weights!(u::Matrix{T}, A::Matrix{T}, b::Vector{T},
                 end
             end
         end
-        for (s, t) in siblings[i]
+        k1, k2  = sibling_indices[i]
+        for k = k1 : k2
+            (s, t) = joined_siblings[k]
             @simd ivdep for j = 1 : num_stages
                 u[j,i] += m[j,s] .* u[j,t]
             end
         end
     end
+    return u
 end
 
 function find_children_siblings(dependencies::Vector{Vector{Int}})
@@ -1021,7 +1025,8 @@ struct RKOCBackpropEvaluator{T <: Real}
     num_constrs::Int
     dependencies::Vector{Pair{Int,Int}}
     children::Vector{Int}
-    siblings::Vector{Vector{Tuple{Int,Int}}}
+    joined_siblings::Vector{Tuple{Int,Int}}
+    sibling_indices::Vector{Pair{Int,Int}}
     inv_density::Vector{T}
     m::Matrix{T} # Matrix of Butcher weights
     u::Matrix{T} # Gradients of Butcher weights
@@ -1048,9 +1053,13 @@ function RKOCBackpropEvaluator{T}(order::Int, num_stages::Int) where {T <: Real}
     num_constrs = sum(length.(trees))
     dependencies = dependency_table(trees)
     children, siblings = find_children_siblings(dependencies)
+    ends = cumsum(length.(siblings))
+    starts = vcat([0], ends[1:end-1]) .+ 1
     inv_density = inv.(T.(butcher_density.(vcat(trees...))))
     RKOCBackpropEvaluator(order, num_stages, num_constrs,
-        pair_deps(dependencies), children, siblings, inv_density,
+        pair_deps(dependencies), children,
+        vcat(siblings...), Pair{Int,Int}.(starts, ends),
+        inv_density,
         Matrix{T}(undef, num_stages, num_constrs),
         Matrix{T}(undef, num_stages, num_constrs),
         Vector{T}(undef, num_constrs),
@@ -1084,7 +1093,8 @@ function evaluate_gradient!(gA::Matrix{T}, gb::Vector{T}, A::Matrix{T},
         residual += x * x
         p[j] = x + x
     end
-    backprop_butcher_weights!(u, A, b, m, p, children, evaluator.siblings)
+    backprop_butcher_weights!(u, A, b, m, p, children,
+        evaluator.joined_siblings, evaluator.sibling_indices)
     @inbounds for t = 1 : num_stages
         @simd ivdep for s = 1 : num_stages
             gA[s,t] = zero(T)
