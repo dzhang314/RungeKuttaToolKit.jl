@@ -13,7 +13,6 @@ using Base.Threads: @threads, nthreads, threadid
 using LinearAlgebra: mul!, ldiv!, qrfactUnblocked!
 
 include("./ExampleMethods.jl")
-@inline dbl(x::T) where {T <: Number} = x + x
 
 ##################################################################### PARTITIONS
 
@@ -509,7 +508,8 @@ function populate_v!(evaluator::RKOCEvaluator{T}, v::Vector{T},
                 lvm_v!(evaluator, v, var_index, dst_begin, dst_end, x, src1)
             elseif src1 == src2
                 @simd ivdep for i = 0 : dst_end - dst_begin
-                    @inbounds v[dst_begin + i] = dbl(u[src1 + i] * v[src1 + i])
+                    temp = u[src1 + i] * v[src1 + i]
+                    @inbounds v[dst_begin + i] = temp + temp
                 end
             else
                 @simd ivdep for i = 0 : dst_end - dst_begin
@@ -948,17 +948,15 @@ end
 ########################################################## RKOC BACKPROP HELPERS
 
 function compute_butcher_weights!(m::Matrix{T}, A::Matrix{T},
-        dependencies::Vector{Vector{Int}}) where {T <: Number}
-    num_stages, num_constrs = size(m, 1), size(m, 2)
+        dependencies::Vector{Pair{Int,Int}}) where {T <: Number}
+    num_stages, num_constrs = size(m)
     @inbounds for i = 1 : num_constrs
-        dep = dependencies[i]
-        n = length(dep)
-        if n == 0
+        d, e = dependencies[i]
+        if d == 0
             @simd ivdep for j = 1 : num_stages
                 m[j,i] = one(T)
             end
-        elseif n == 1
-            d = dep[1]
+        elseif e == 0
             for j = 1 : num_stages
                 temp = zero(T)
                 @simd for k = 1 : num_stages
@@ -967,12 +965,12 @@ function compute_butcher_weights!(m::Matrix{T}, A::Matrix{T},
                 m[j,i] = temp
             end
         else
-            d, e = dep[1], dep[2]
             @simd ivdep for j = 1 : num_stages
                 m[j,i] = m[j,d] * m[j,e]
             end
         end
     end
+    return m
 end
 
 function backprop_butcher_weights!(u::Matrix{T}, A::Matrix{T}, b::Vector{T},
@@ -1021,7 +1019,7 @@ struct RKOCBackpropEvaluator{T <: Real}
     order::Int
     num_stages::Int
     num_constrs::Int
-    dependencies::Vector{Vector{Int}}
+    dependencies::Vector{Pair{Int,Int}}
     children::Vector{Int}
     siblings::Vector{Vector{Tuple{Int,Int}}}
     inv_density::Vector{T}
@@ -1031,6 +1029,20 @@ struct RKOCBackpropEvaluator{T <: Real}
     q::Vector{T} # Dot products of Butcher weights
 end
 
+function pair_deps(dependencies::Vector{Vector{Int}})::Vector{Pair{Int,Int}}
+    result = Pair{Int,Int}[]
+    @inbounds for dep in dependencies
+        if length(dep) == 0
+            push!(result, 0 => 0)
+        elseif length(dep) == 1
+            push!(result, dep[1] => 0)
+        else
+            push!(result, dep[1] => dep[2])
+        end
+    end
+    return result
+end
+
 function RKOCBackpropEvaluator{T}(order::Int, num_stages::Int) where {T <: Real}
     trees = rooted_trees(order)
     num_constrs = sum(length.(trees))
@@ -1038,7 +1050,7 @@ function RKOCBackpropEvaluator{T}(order::Int, num_stages::Int) where {T <: Real}
     children, siblings = find_children_siblings(dependencies)
     inv_density = inv.(T.(butcher_density.(vcat(trees...))))
     RKOCBackpropEvaluator(order, num_stages, num_constrs,
-        dependencies, children, siblings, inv_density,
+        pair_deps(dependencies), children, siblings, inv_density,
         Matrix{T}(undef, num_stages, num_constrs),
         Matrix{T}(undef, num_stages, num_constrs),
         Vector{T}(undef, num_constrs),
@@ -1070,7 +1082,7 @@ function evaluate_gradient!(gA::Matrix{T}, gb::Vector{T}, A::Matrix{T},
     @inbounds @simd for j = 1 : num_constrs
         x = q[j] - inv_density[j]
         residual += x * x
-        p[j] = dbl(x)
+        p[j] = x + x
     end
     backprop_butcher_weights!(u, A, b, m, p, children, evaluator.siblings)
     @inbounds for t = 1 : num_stages
