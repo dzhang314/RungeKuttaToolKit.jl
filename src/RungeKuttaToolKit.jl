@@ -4,10 +4,13 @@ export RKOCEvaluator, evaluate_residual!, evaluate_jacobian!,
     evaluate_error_coefficients!, evaluate_error_jacobian!,
     constrain!, compute_order!, compute_stages,
     RKOCBackpropEvaluator, evaluate_residual2, evaluate_gradient!,
-    populate_explicit!,
+    populate_explicit!, populate_implicit!,
     RKOCExplicitBackpropObjectiveFunctor,
     RKOCExplicitBackpropGradientFunctor,
-    rkoc_explicit_backprop_functors
+    RKOCImplicitBackpropObjectiveFunctor,
+    RKOCImplicitBackpropGradientFunctor,
+    rkoc_explicit_backprop_functors,
+    rkoc_implicit_backprop_functors
 
 using Base.Threads: @threads, nthreads, threadid
 using LinearAlgebra: mul!, ldiv!, qrfactUnblocked!
@@ -1147,9 +1150,37 @@ function populate_explicit!(x::Vector{T}, A::Matrix{T}, b::Vector{T},
     end
 end
 
+function populate_implicit!(A::Matrix{T}, b::Vector{T}, x::Vector{T},
+        n::Int)::Nothing where {T <: Number}
+    n2 = n * n
+    @simd ivdep for i = 1 : n2
+        @inbounds A[i] = x[i]
+    end
+    @simd ivdep for i = 1 : n
+        @inbounds b[i] = x[n2 + i]
+    end
+end
+
+function populate_implicit!(x::Vector{T}, A::Matrix{T}, b::Vector{T},
+        n::Int)::Nothing where {T <: Number}
+    n2 = n * n
+    @simd ivdep for i = 1 : n2
+        @inbounds x[i] = A[i]
+    end
+    @simd ivdep for i = 1 : n
+        @inbounds x[n2 + i] = b[i]
+    end
+end
+
 ##################################################### BACKPROP FUNCTOR INTERFACE
 
 struct RKOCExplicitBackpropObjectiveFunctor{T <: Real}
+    evaluator::RKOCBackpropEvaluator{T}
+    A::Matrix{T}
+    b::Vector{T}
+end
+
+struct RKOCImplicitBackpropObjectiveFunctor{T <: Real}
     evaluator::RKOCBackpropEvaluator{T}
     A::Matrix{T}
     b::Vector{T}
@@ -1163,11 +1194,26 @@ struct RKOCExplicitBackpropGradientFunctor{T <: Real}
     gb::Vector{T}
 end
 
+struct RKOCImplicitBackpropGradientFunctor{T <: Real}
+    evaluator::RKOCBackpropEvaluator{T}
+    A::Matrix{T}
+    b::Vector{T}
+    gA::Matrix{T}
+    gb::Vector{T}
+end
+
 @inline function (of::RKOCExplicitBackpropObjectiveFunctor{T})(
         x::Vector{T})::T where {T <: Real}
     A, b, evaluator = of.A, of.b, of.evaluator
     populate_explicit!(A, b, x, evaluator.num_stages)
-    evaluate_residual2(A, b, evaluator)
+    return evaluate_residual2(A, b, evaluator)
+end
+
+@inline function (of::RKOCImplicitBackpropObjectiveFunctor{T})(
+        x::Vector{T})::T where {T <: Real}
+    A, b, evaluator = of.A, of.b, of.evaluator
+    populate_implicit!(A, b, x, evaluator.num_stages)
+    return evaluate_residual2(A, b, evaluator)
 end
 
 @inline function (gf::RKOCExplicitBackpropGradientFunctor{T})(
@@ -1176,7 +1222,16 @@ end
     populate_explicit!(A, b, x, evaluator.num_stages)
     result = evaluate_gradient!(gA, gb, A, b, evaluator)
     populate_explicit!(gx, gA, gb, evaluator.num_stages)
-    result
+    return result
+end
+
+@inline function (gf::RKOCImplicitBackpropGradientFunctor{T})(
+        gx::Vector{T}, x::Vector{T})::T where {T <: Real}
+    A, b, gA, gb, evaluator = gf.A, gf.b, gf.gA, gf.gb, gf.evaluator
+    populate_implicit!(A, b, x, evaluator.num_stages)
+    result = evaluate_gradient!(gA, gb, A, b, evaluator)
+    populate_implicit!(gx, gA, gb, evaluator.num_stages)
+    return result
 end
 
 function rkoc_explicit_backprop_functors(::Type{T}, order::Int,
@@ -1186,8 +1241,19 @@ function rkoc_explicit_backprop_functors(::Type{T}, order::Int,
     b = Vector{T}(undef, num_stages)
     gA = Matrix{T}(undef, num_stages, num_stages)
     gb = Vector{T}(undef, num_stages)
-    RKOCExplicitBackpropObjectiveFunctor{T}(evaluator, A, b),
-        RKOCExplicitBackpropGradientFunctor{T}(evaluator, A, b, gA, gb)
+    return RKOCExplicitBackpropObjectiveFunctor{T}(evaluator, A, b),
+           RKOCExplicitBackpropGradientFunctor{T}(evaluator, A, b, gA, gb)
+end
+
+function rkoc_implicit_backprop_functors(::Type{T}, order::Int,
+                                         num_stages::Int) where {T <: Real}
+    evaluator = RKOCBackpropEvaluator{T}(order, num_stages)
+    A = Matrix{T}(undef, num_stages, num_stages)
+    b = Vector{T}(undef, num_stages)
+    gA = Matrix{T}(undef, num_stages, num_stages)
+    gb = Vector{T}(undef, num_stages)
+    return RKOCImplicitBackpropObjectiveFunctor{T}(evaluator, A, b),
+           RKOCImplicitBackpropGradientFunctor{T}(evaluator, A, b, gA, gb)
 end
 
 end # module RungeKuttaToolKit
