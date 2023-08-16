@@ -26,7 +26,7 @@ function _int_parts_impl(n::Int, max::Int)::Vector{Vector{Pair{Int,Int}}}
         Vector{Pair{Int,Int}}[]
     else
         result = Vector{Pair{Int,Int}}[]
-        for m = max : -1 : 1, q = div(n, m) : -1 : 1
+        for m = max:-1:1, q = div(n, m):-1:1
             for p in _int_parts_impl(n - q * m, m - 1)
                 push!(result, push!(p, m => q))
             end
@@ -42,7 +42,7 @@ function _int_parts_impl(n::Int, max::Int, len::Int)::Vector{Vector{Int}}
         Vector{Int}[]
     else
         result = Vector{Int}[]
-        for m = min(n, max) : -1 : div(n + len - 1, len)
+        for m = min(n, max):-1:div(n + len - 1, len)
             for p in _int_parts_impl(n - m, m, len - 1)
                 push!(result, push!(p, m))
             end
@@ -60,7 +60,9 @@ integer_partitions(n::Int, len::Int)::Vector{Vector{Int}} =
 
 function previous_permutation!(items::Vector{T})::Bool where {T}
     num_items = length(items)
-    if num_items == 0; return false; end
+    if num_items == 0
+        return false
+    end
     current_item = items[num_items]
     pivot_index = num_items - 1
     while pivot_index != 0
@@ -68,29 +70,40 @@ function previous_permutation!(items::Vector{T})::Bool where {T}
         if next_item <= current_item
             pivot_index -= 1
             current_item = next_item
-        else; break; end
+        else
+            break
+        end
     end
-    if pivot_index == 0; return false; end
+    if pivot_index == 0
+        return false
+    end
     pivot = items[pivot_index]
     successor_index = num_items
-    while items[successor_index] >= pivot; successor_index -= 1; end
+    while items[successor_index] >= pivot
+        successor_index -= 1
+    end
     items[pivot_index], items[successor_index] =
         items[successor_index], items[pivot_index]
-    reverse!(view(items, pivot_index + 1 : num_items))
+    reverse!(view(items, pivot_index+1:num_items))
     return true
 end
 
 function combinations_with_replacement(
-        items::Vector{T}, n::Int)::Vector{Vector{Pair{T,Int}}} where {T}
+    items::Vector{T}, n::Int
+)::Vector{Vector{Pair{T,Int}}} where {T}
     combinations = Vector{Pair{T,Int}}[]
     for p in integer_partitions(n, length(items))
         while true
             comb = Pair{T,Int}[]
             for (item, k) in zip(items, p)
-                if k > 0; push!(comb, item => k); end
+                if k > 0
+                    push!(comb, item => k)
+                end
             end
             push!(combinations, comb)
-            if !previous_permutation!(p); break; end
+            if !previous_permutation!(p)
+                break
+            end
         end
     end
     combinations
@@ -105,7 +118,7 @@ end
 
 function rooted_trees(n::Int)::Vector{Vector{RootedTree}}
     result = Vector{RootedTree}[]
-    for k = 1 : n
+    for k = 1:n
         trees = RootedTree[]
         for partition in integer_partitions(k - 1)
             combination_candidates = [
@@ -121,12 +134,16 @@ function rooted_trees(n::Int)::Vector{Vector{RootedTree}}
 end
 
 function rooted_tree_count(n::Int)::BigInt
-    if n < 0; error("rooted_tree_count requires non-negative argument"); end
-    if n == 0; return 0; end
+    if n < 0
+        error("rooted_tree_count requires non-negative argument")
+    end
+    if n == 0
+        return 0
+    end
     counts = zeros(Rational{BigInt}, n)
     counts[1] = 1
-    for i = 2 : n, k = 1 : i - 1, m = 1 : div(i - 1, k)
-        @inbounds counts[i] += k * counts[k] * counts[i - k * m] // (i - 1)
+    for i = 2:n, k = 1:i-1, m = 1:div(i - 1, k)
+        @inbounds counts[i] += k * counts[k] * counts[i-k*m] // (i - 1)
     end
     @assert all(isone(denominator(c)) for c in counts)
     sum(numerator.(counts))
@@ -162,22 +179,22 @@ function Base.show(io::IO, tree::RootedTree)::Nothing
 end
 
 function tree_index_table(
-        trees_of_order::Vector{Vector{RootedTree}})::Dict{String,Int}
+    trees_of_order::Vector{Vector{RootedTree}})::Dict{String,Int}
     order = length(trees_of_order)
     tree_index = Dict{String,Int}()
     i = 0
-    for p = 1 : order - 1, tree in trees_of_order[p]
+    for p = 1:order-1, tree in trees_of_order[p]
         tree_index[string(tree)] = (i += 1)
     end
     tree_index
 end
 
 function dependency_table(
-        trees_of_order::Vector{Vector{RootedTree}})::Vector{Vector{Int}}
+    trees_of_order::Vector{Vector{RootedTree}})::Vector{Vector{Int}}
     order = length(trees_of_order)
     tree_index = tree_index_table(trees_of_order)
     dependencies = Vector{Int}[]
-    for p = 1 : order, tree in trees_of_order[p]
+    for p = 1:order, tree in trees_of_order[p]
         num_children = length(tree.children)
         if num_children == 0
             push!(dependencies, Int[])
@@ -198,8 +215,8 @@ function dependency_table(
                 push!(dependencies, [a, b])
             end
         else
-            head_factor = RootedTree(0, tree.children[1 : 1])
-            tail_factor = RootedTree(0, tree.children[2 : end])
+            head_factor = RootedTree(0, tree.children[1:1])
+            tail_factor = RootedTree(0, tree.children[2:end])
             a = tree_index[string(head_factor)]
             b = tree_index[string(tail_factor)]
             push!(dependencies, [a, b])
@@ -234,8 +251,10 @@ function deficit_table(dependencies::Vector{Vector{Int}})::Vector{Int}
     deficit
 end
 
-function range_table(dependencies::Vector{Vector{Int}},
-        num_stages::Int)::Vector{Tuple{Int,Int}}
+function range_table(
+    dependencies::Vector{Vector{Int}},
+    num_stages::Int
+)::Vector{Tuple{Int,Int}}
     deficit = deficit_table(dependencies)
     lengths = num_stages .- deficit
     clamp!(lengths, 0, typemax(Int))
@@ -243,11 +262,13 @@ function range_table(dependencies::Vector{Vector{Int}},
     cumsum!(lengths, lengths)
     table_size = lengths[end]
     ranges = vcat([(1, 0)], collect(
-        zip(lengths[1 : end - 1] .+ 1, lengths[2 : end])))
+        zip(lengths[1:end-1] .+ 1, lengths[2:end])))
 end
 
-function instruction_table(dependencies::Vector{Vector{Int}},
-        ranges::Vector{Tuple{Int,Int}})::Vector{NTuple{5,Int}}
+function instruction_table(
+    dependencies::Vector{Vector{Int}},
+    ranges::Vector{Tuple{Int,Int}}
+)::Vector{NTuple{5,Int}}
     instructions = Vector{NTuple{5,Int}}(undef, length(dependencies))
     for (i, deps) in enumerate(dependencies)
         num_deps = length(deps)
@@ -268,8 +289,11 @@ end
 
 ############################################################# INDEX MANIPULATION
 
-function require!(required::Vector{Bool},
-        dependencies::Vector{Vector{Int}}, index::Int)::Nothing
+function require!(
+    required::Vector{Bool},
+    dependencies::Vector{Vector{Int}},
+    index::Int
+)::Nothing
     if !required[index]
         required[index] = true
         for dep in dependencies[index]
@@ -278,10 +302,13 @@ function require!(required::Vector{Bool},
     end
 end
 
-function assert_requirements_satisfied(required::Vector{Bool},
-        dependencies::Vector{Vector{Int}}, indices::Vector{Int})::Nothing
+function assert_requirements_satisfied(
+    required::Vector{Bool},
+    dependencies::Vector{Vector{Int}},
+    indices::Vector{Int}
+)::Nothing
     @assert(all(required[indices]))
-    for index = 1 : length(dependencies)
+    for index = 1:length(dependencies)
         if required[index]
             @assert(all(required[dep] for dep in dependencies[index]))
         end
@@ -291,9 +318,9 @@ end
 function included_indices(mask::Vector{Bool})::Vector{Int}
     result = Vector{Int}(undef, sum(mask))
     count = 0
-    for index = 1 : length(mask)
+    for index = 1:length(mask)
         if mask[index]
-            result[count += 1] = index
+            result[count+=1] = index
         end
     end
     result
@@ -302,7 +329,7 @@ end
 function restricted_indices(mask::Vector{Bool})::Vector{Int}
     result = Vector{Int}(undef, length(mask))
     count = 0
-    for index = 1 : length(mask)
+    for index = 1:length(mask)
         if mask[index]
             result[index] = (count += 1)
         else
@@ -313,7 +340,7 @@ function restricted_indices(mask::Vector{Bool})::Vector{Int}
 end
 
 function inverse_index_table(indices::Vector{Int}, n::Int)
-    result = [0 for _ = 1 : n]
+    result = [0 for _ = 1:n]
     for (i, j) in enumerate(indices)
         result[j] = i
     end
@@ -328,7 +355,7 @@ function restricted_trees_dependencies(indices::Vector{Int})
     end
     trees_of_order = rooted_trees(order)
     full_dependencies = dependency_table(trees_of_order)
-    required = [false for _ = 1 : length(full_dependencies)]
+    required = [false for _ = 1:length(full_dependencies)]
     for index in indices
         require!(required, full_dependencies, index)
     end
@@ -346,7 +373,7 @@ end
 
 ##################################################### RKOC EVALUATOR CONSTRUCTOR
 
-struct RKOCEvaluator{T <: Real}
+struct RKOCEvaluator{T<:Real}
     order::Int
     num_stages::Int
     num_vars::Int
@@ -359,7 +386,7 @@ struct RKOCEvaluator{T <: Real}
     vs::Vector{Vector{T}}
 end
 
-function RKOCEvaluator{T}(order::Int, num_stages::Int) where {T <: Real}
+function RKOCEvaluator{T}(order::Int, num_stages::Int) where {T<:Real}
     # TODO: This assertion should not be necessary.
     @assert(order >= 2)
     num_vars = div(num_stages * (num_stages + 1), 2)
@@ -370,19 +397,24 @@ function RKOCEvaluator{T}(order::Int, num_stages::Int) where {T <: Real}
     ranges = range_table(dependencies, num_stages)
     table_size = ranges[end][2]
     instructions = instruction_table(dependencies, ranges)
-    rounds = [NTuple{5,Int}[] for _ = 1 : maximum(generation) - 1]
+    rounds = [NTuple{5,Int}[] for _ = 1:maximum(generation)-1]
     for (i, g) in enumerate(generation)
-        if g > 1; push!(rounds[g - 1], instructions[i]); end
+        if g > 1
+            push!(rounds[g-1], instructions[i])
+        end
     end
-    RKOCEvaluator{T}(order, num_stages, num_vars, num_constrs, Int[], rounds,
+    return RKOCEvaluator{T}(
+        order, num_stages, num_vars, num_constrs, Int[], rounds,
         inv.(T.(butcher_density.(vcat(trees_of_order...)))),
         inv.(T.(butcher_symmetry.(vcat(trees_of_order...)))),
         Vector{T}(undef, table_size),
-        [Vector{T}(undef, table_size) for _ = 1 : nthreads()])
+        [Vector{T}(undef, table_size) for _ = 1:nthreads()]
+    )
 end
 
-function RKOCEvaluator{T}(indices::Vector{Int},
-        num_stages::Int) where {T <: Real}
+function RKOCEvaluator{T}(
+    indices::Vector{Int}, num_stages::Int
+) where {T<:Real}
     num_vars = div(num_stages * (num_stages + 1), 2)
     trees, dependencies, output_indices =
         restricted_trees_dependencies(indices)
@@ -391,55 +423,65 @@ function RKOCEvaluator{T}(indices::Vector{Int},
     ranges = range_table(dependencies, num_stages)
     table_size = ranges[end][2]
     instructions = instruction_table(dependencies, ranges)
-    rounds = [NTuple{5,Int}[] for _ = 1 : maximum(generation) - 1]
+    rounds = [NTuple{5,Int}[] for _ = 1:maximum(generation)-1]
     for (i, g) in enumerate(generation)
-        if g > 1; push!(rounds[g - 1], instructions[i]); end
+        if g > 1
+            push!(rounds[g-1], instructions[i])
+        end
     end
-    RKOCEvaluator{T}(0, num_stages, num_vars, num_constrs,
+    return RKOCEvaluator{T}(
+        0, num_stages, num_vars, num_constrs,
         output_indices, rounds,
         inv.(T.(butcher_density.(trees))),
         inv.(T.(butcher_symmetry.(trees))),
         Vector{T}(undef, table_size),
-        [Vector{T}(undef, table_size) for _ = 1 : nthreads()])
+        [Vector{T}(undef, table_size) for _ = 1:nthreads()]
+    )
 end
 
 ######################################################## RKOC EVALUATION HELPERS
 
-function populate_u_init!(evaluator::RKOCEvaluator{T},
-        x::Vector{T})::Nothing where {T <: Real}
+function populate_u_init!(
+    evaluator::RKOCEvaluator{T}, x::Vector{T}
+)::Nothing where {T<:Real}
     u = evaluator.u
     k = 1
-    for i = 1 : evaluator.num_stages - 1
+    for i = 1:evaluator.num_stages-1
         @inbounds result = x[k]
-        @simd for j = 1 : i - 1
-            @inbounds result += x[k + j]
+        @simd for j = 1:i-1
+            @inbounds result += x[k+j]
         end
         @inbounds u[i] = result
         k += i
     end
 end
 
-function lvm_u!(evaluator::RKOCEvaluator{T}, dst_begin::Int, dst_end::Int,
-                x::Vector{T}, src_begin::Int)::Nothing where {T <: Real}
-    if dst_begin > dst_end; return; end
+function lvm_u!(
+    evaluator::RKOCEvaluator{T}, dst_begin::Int, dst_end::Int,
+    x::Vector{T}, src_begin::Int
+)::Nothing where {T<:Real}
+    if dst_begin > dst_end
+        return
+    end
     u = evaluator.u
     dst_size = dst_end - dst_begin + 1
     skip = evaluator.num_stages - dst_size
     index = div(skip * (skip + 1), 2)
     @inbounds u[dst_begin] = x[index] * u[src_begin]
-    for i = 1 : dst_size - 1
+    for i = 1:dst_size-1
         index += skip
         skip += 1
         @inbounds result = x[index] * u[src_begin]
-        @simd for j = 1 : i
-            @inbounds result += x[index + j] * u[src_begin + j]
+        @simd for j = 1:i
+            @inbounds result += x[index+j] * u[src_begin+j]
         end
-        @inbounds u[dst_begin + i] = result
+        @inbounds u[dst_begin+i] = result
     end
 end
 
-function populate_u!(evaluator::RKOCEvaluator{T},
-        x::Vector{T})::Nothing where {T <: Real}
+function populate_u!(
+    evaluator::RKOCEvaluator{T}, x::Vector{T}
+)::Nothing where {T<:Real}
     u = evaluator.u
     populate_u_init!(evaluator, x)
     for round in evaluator.rounds
@@ -447,25 +489,26 @@ function populate_u!(evaluator::RKOCEvaluator{T},
             if src2 == -1
                 lvm_u!(evaluator, dst_begin, dst_end, x, src1)
             elseif src1 == src2
-                @simd ivdep for i = 0 : dst_end - dst_begin
-                    @inbounds u[dst_begin + i] = u[src1 + i]^2
+                @simd ivdep for i = 0:dst_end-dst_begin
+                    @inbounds u[dst_begin+i] = u[src1+i]^2
                 end
             else
-                @simd ivdep for i = 0 : dst_end - dst_begin
-                    @inbounds u[dst_begin + i] = u[src1 + i] * u[src2 + i]
+                @simd ivdep for i = 0:dst_end-dst_begin
+                    @inbounds u[dst_begin+i] = u[src1+i] * u[src2+i]
                 end
             end
         end
     end
 end
 
-function populate_v_init!(evaluator::RKOCEvaluator{T},
-        v::Vector{T}, var_index::Int)::Nothing where {T <: Real}
+function populate_v_init!(
+    evaluator::RKOCEvaluator{T}, v::Vector{T}, var_index::Int
+)::Nothing where {T<:Real}
     j = 0
-    for i = 1 : evaluator.num_stages - 1
+    for i = 1:evaluator.num_stages-1
         result = (j == var_index)
         j += 1
-        for _ = 1 : i - 1
+        for _ = 1:i-1
             result |= (j == var_index)
             j += 1
         end
@@ -473,36 +516,42 @@ function populate_v_init!(evaluator::RKOCEvaluator{T},
     end
 end
 
-function lvm_v!(evaluator::RKOCEvaluator{T}, v::Vector{T}, var_index::Int,
-                dst_begin::Int, dst_end::Int,
-                x::Vector{T}, src_begin::Int)::Nothing where {T <: Real}
-    if dst_begin > dst_end; return; end
+function lvm_v!(
+    evaluator::RKOCEvaluator{T}, v::Vector{T}, var_index::Int,
+    dst_begin::Int, dst_end::Int,
+    x::Vector{T}, src_begin::Int
+)::Nothing where {T<:Real}
+    if dst_begin > dst_end
+        return
+    end
     u = evaluator.u
     dst_size = dst_end - dst_begin + 1
     skip = evaluator.num_stages - dst_size
     index = div(skip * (skip + 1), 2)
     if index == var_index + 1
-        @inbounds v[dst_begin] = (x[index - 1 + 1] * v[src_begin] +
-            u[src_begin + var_index - index + 1])
+        @inbounds v[dst_begin] = (x[index-1+1] * v[src_begin] +
+                                  u[src_begin+var_index-index+1])
     else
-        @inbounds v[dst_begin] = (x[index - 1 + 1] * v[src_begin])
+        @inbounds v[dst_begin] = (x[index-1+1] * v[src_begin])
     end
-    for i = 1 : dst_size - 1
+    for i = 1:dst_size-1
         index += skip
         skip += 1
         @inbounds result = x[index] * v[src_begin]
-        @simd for j = 1 : i
-            @inbounds result += x[index + j] * v[src_begin + j]
+        @simd for j = 1:i
+            @inbounds result += x[index+j] * v[src_begin+j]
         end
         if (index <= var_index + 1) && (var_index + 1 <= index + i)
-            @inbounds result += u[src_begin + var_index - index + 1]
+            @inbounds result += u[src_begin+var_index-index+1]
         end
-        @inbounds v[dst_begin + i] = result
+        @inbounds v[dst_begin+i] = result
     end
 end
 
-function populate_v!(evaluator::RKOCEvaluator{T}, v::Vector{T},
-                     x::Vector{T}, var_index::Int)::Nothing where {T <: Real}
+function populate_v!(
+    evaluator::RKOCEvaluator{T}, v::Vector{T},
+    x::Vector{T}, var_index::Int
+)::Nothing where {T<:Real}
     u = evaluator.u
     populate_v_init!(evaluator, v, var_index)
     for round in evaluator.rounds
@@ -510,34 +559,38 @@ function populate_v!(evaluator::RKOCEvaluator{T}, v::Vector{T},
             if src2 == -1
                 lvm_v!(evaluator, v, var_index, dst_begin, dst_end, x, src1)
             elseif src1 == src2
-                @simd ivdep for i = 0 : dst_end - dst_begin
-                    temp = u[src1 + i] * v[src1 + i]
-                    @inbounds v[dst_begin + i] = temp + temp
+                @simd ivdep for i = 0:dst_end-dst_begin
+                    temp = u[src1+i] * v[src1+i]
+                    @inbounds v[dst_begin+i] = temp + temp
                 end
             else
-                @simd ivdep for i = 0 : dst_end - dst_begin
-                    @inbounds v[dst_begin + i] = (u[src1 + i] * v[src2 + i] +
-                                                  u[src2 + i] * v[src1 + i])
+                @simd ivdep for i = 0:dst_end-dst_begin
+                    @inbounds v[dst_begin+i] = (u[src1+i] * v[src2+i] +
+                                                u[src2+i] * v[src1+i])
                 end
             end
         end
     end
 end
 
-@inline function dot_inplace(n::Int,
-        v::Vector{T}, v_offset::Int,
-        w::Vector{T}, w_offset::Int)::T where {T <: Real}
+@inline function dot_inplace(
+    n::Int,
+    v::Vector{T}, v_offset::Int,
+    w::Vector{T}, w_offset::Int
+)::T where {T<:Real}
     result = zero(T)
-    @simd for i = 1 : n
-        @inbounds result += v[v_offset + i] * w[w_offset + i]
+    @simd for i = 1:n
+        @inbounds result += v[v_offset+i] * w[w_offset+i]
     end
     result
 end
 
 ################################################################ RKOC EVALUATION
 
-function evaluate_residual!(res::Vector{T}, x::Vector{T},
-        evaluator::RKOCEvaluator{T})::Nothing where {T <: Real}
+function evaluate_residual!(
+    res::Vector{T}, x::Vector{T},
+    evaluator::RKOCEvaluator{T}
+)::Nothing where {T<:Real}
     @assert(length(x) == evaluator.num_vars)
     u = evaluator.u
     num_stages = evaluator.num_stages
@@ -549,13 +602,13 @@ function evaluate_residual!(res::Vector{T}, x::Vector{T},
         let
             first = -one(T)
             b_idx = num_vars - num_stages + 1
-            @simd for i = b_idx : num_vars
+            @simd for i = b_idx:num_vars
                 @inbounds first += x[i]
             end
             @inbounds res[1] = first
         end
         @inbounds res[2] = dot_inplace(num_stages - 1, u, 0,
-                                       x, num_vars - num_stages + 1) - T(0.5)
+            x, num_vars - num_stages + 1) - T(0.5)
         for round in evaluator.rounds
             @threads for (res_index, dst_begin, dst_end, _, _) in round
                 j = dst_begin - 1
@@ -571,7 +624,7 @@ function evaluate_residual!(res::Vector{T}, x::Vector{T},
             if output_index > 0
                 first = -one(T)
                 b_idx = num_vars - num_stages + 1
-                @simd for i = b_idx : num_vars
+                @simd for i = b_idx:num_vars
                     @inbounds first += x[i]
                 end
                 @inbounds res[output_index] = first
@@ -600,8 +653,10 @@ function evaluate_residual!(res::Vector{T}, x::Vector{T},
     end
 end
 
-function evaluate_error_coefficients!(res::Vector{T}, x::Vector{T},
-        evaluator::RKOCEvaluator{T})::Nothing where {T <: Real}
+function evaluate_error_coefficients!(
+    res::Vector{T}, x::Vector{T},
+    evaluator::RKOCEvaluator{T}
+)::Nothing where {T<:Real}
     @assert(length(x) == evaluator.num_vars)
     u = evaluator.u
     num_stages = evaluator.num_stages
@@ -614,13 +669,13 @@ function evaluate_error_coefficients!(res::Vector{T}, x::Vector{T},
         let
             first = -one(T)
             b_idx = num_vars - num_stages + 1
-            @simd for i = b_idx : num_vars
+            @simd for i = b_idx:num_vars
                 @inbounds first += x[i]
             end
             @inbounds res[1] = first
         end
         @inbounds res[2] = dot_inplace(num_stages - 1, u, 0,
-                                       x, num_vars - num_stages + 1) - T(0.5)
+            x, num_vars - num_stages + 1) - T(0.5)
         for round in evaluator.rounds
             @threads for (res_index, dst_begin, dst_end, _, _) in round
                 j = dst_begin - 1
@@ -636,7 +691,7 @@ function evaluate_error_coefficients!(res::Vector{T}, x::Vector{T},
             if output_index > 0
                 first = -one(T)
                 b_idx = num_vars - num_stages + 1
-                @simd for i = b_idx : num_vars
+                @simd for i = b_idx:num_vars
                     @inbounds first += x[i]
                 end
                 @inbounds res[output_index] = first
@@ -667,15 +722,17 @@ end
 
 ########################################################### RKOC DIFFERENTIATION
 
-function evaluate_jacobian!(jac::Matrix{T}, x::Vector{T},
-        evaluator::RKOCEvaluator{T})::Nothing where {T <: Real}
+function evaluate_jacobian!(
+    jac::Matrix{T}, x::Vector{T},
+    evaluator::RKOCEvaluator{T}
+)::Nothing where {T<:Real}
     @assert(length(x) == evaluator.num_vars)
     u = evaluator.u
     num_stages = evaluator.num_stages
     num_vars = evaluator.num_vars
     output_indices = evaluator.output_indices
     populate_u!(evaluator, x)
-    @threads for var_idx = 1 : num_vars
+    @threads for var_idx = 1:num_vars
         @inbounds v = evaluator.vs[threadid()]
         populate_v!(evaluator, v, x, var_idx - 1)
         if length(output_indices) == 0
@@ -685,7 +742,7 @@ function evaluate_jacobian!(jac::Matrix{T}, x::Vector{T},
                 m = num_vars - n
                 result = dot_inplace(n, v, 0, x, m)
                 if var_idx + n > num_vars
-                    @inbounds result += u[var_idx - m]
+                    @inbounds result += u[var_idx-m]
                 end
                 @inbounds jac[2, var_idx] = result
             end
@@ -695,7 +752,7 @@ function evaluate_jacobian!(jac::Matrix{T}, x::Vector{T},
                     m = num_vars - n
                     result = dot_inplace(n, v, dst_begin - 1, x, m)
                     if var_idx + n > num_vars
-                        @inbounds result += u[dst_begin - 1 + var_idx - m]
+                        @inbounds result += u[dst_begin-1+var_idx-m]
                     end
                     @inbounds jac[res_index, var_idx] = result
                 end
@@ -715,7 +772,7 @@ function evaluate_jacobian!(jac::Matrix{T}, x::Vector{T},
                     m = num_vars - n
                     result = dot_inplace(n, v, 0, x, m)
                     if var_idx + n > num_vars
-                        @inbounds result += u[var_idx - m]
+                        @inbounds result += u[var_idx-m]
                     end
                     @inbounds jac[output_index, var_idx] = result
                 end
@@ -728,7 +785,7 @@ function evaluate_jacobian!(jac::Matrix{T}, x::Vector{T},
                         m = num_vars - n
                         result = dot_inplace(n, v, dst_begin - 1, x, m)
                         if var_idx + n > num_vars
-                            @inbounds result += u[dst_begin - 1 + var_idx - m]
+                            @inbounds result += u[dst_begin-1+var_idx-m]
                         end
                         @inbounds jac[output_index, var_idx] = result
                     end
@@ -738,8 +795,10 @@ function evaluate_jacobian!(jac::Matrix{T}, x::Vector{T},
     end
 end
 
-function evaluate_error_jacobian!(jac::Matrix{T}, x::Vector{T},
-        evaluator::RKOCEvaluator{T})::Nothing where {T <: Real}
+function evaluate_error_jacobian!(
+    jac::Matrix{T}, x::Vector{T},
+    evaluator::RKOCEvaluator{T}
+)::Nothing where {T<:Real}
     @assert(length(x) == evaluator.num_vars)
     u = evaluator.u
     num_stages = evaluator.num_stages
@@ -747,7 +806,7 @@ function evaluate_error_jacobian!(jac::Matrix{T}, x::Vector{T},
     output_indices = evaluator.output_indices
     inv_symmetry = evaluator.inv_symmetry
     populate_u!(evaluator, x)
-    @threads for var_idx = 1 : num_vars
+    @threads for var_idx = 1:num_vars
         @inbounds v = evaluator.vs[threadid()]
         populate_v!(evaluator, v, x, var_idx - 1)
         if length(output_indices) == 0
@@ -757,7 +816,7 @@ function evaluate_error_jacobian!(jac::Matrix{T}, x::Vector{T},
                 m = num_vars - n
                 result = dot_inplace(n, v, 0, x, m)
                 if var_idx + n > num_vars
-                    @inbounds result += u[var_idx - m]
+                    @inbounds result += u[var_idx-m]
                 end
                 @inbounds jac[2, var_idx] = result
             end
@@ -767,7 +826,7 @@ function evaluate_error_jacobian!(jac::Matrix{T}, x::Vector{T},
                     m = num_vars - n
                     result = dot_inplace(n, v, dst_begin - 1, x, m)
                     if var_idx + n > num_vars
-                        @inbounds result += u[dst_begin - 1 + var_idx - m]
+                        @inbounds result += u[dst_begin-1+var_idx-m]
                     end
                     result *= inv_symmetry[res_index]
                     @inbounds jac[res_index, var_idx] = result
@@ -788,7 +847,7 @@ function evaluate_error_jacobian!(jac::Matrix{T}, x::Vector{T},
                     m = num_vars - n
                     result = dot_inplace(n, v, 0, x, m)
                     if var_idx + n > num_vars
-                        @inbounds result += u[var_idx - m]
+                        @inbounds result += u[var_idx-m]
                     end
                     @inbounds jac[output_index, var_idx] = result
                 end
@@ -801,7 +860,7 @@ function evaluate_error_jacobian!(jac::Matrix{T}, x::Vector{T},
                         m = num_vars - n
                         result = dot_inplace(n, v, dst_begin - 1, x, m)
                         if var_idx + n > num_vars
-                            @inbounds result += u[dst_begin - 1 + var_idx - m]
+                            @inbounds result += u[dst_begin-1+var_idx-m]
                         end
                         result *= inv_symmetry[res_index]
                         @inbounds jac[output_index, var_idx] = result
@@ -814,39 +873,40 @@ end
 
 ############################################################## FUNCTOR INTERFACE
 
-struct RKOCEvaluatorAdjointProxy{T <: Real}
+struct RKOCEvaluatorAdjointProxy{T<:Real}
     evaluator::RKOCEvaluator{T}
 end
 
-function Base.adjoint(evaluator::RKOCEvaluator{T}) where {T <: Real}
+function Base.adjoint(evaluator::RKOCEvaluator{T}) where {T<:Real}
     RKOCEvaluatorAdjointProxy{T}(evaluator)
 end
 
-function (evaluator::RKOCEvaluator{T})(x::Vector{T}) where {T <: Real}
+function (evaluator::RKOCEvaluator{T})(x::Vector{T}) where {T<:Real}
     residual = Vector{T}(undef, evaluator.num_constrs)
     evaluate_error_coefficients!(residual, x, evaluator)
     residual
 end
 
-function (proxy::RKOCEvaluatorAdjointProxy{T})(x::Vector{T}) where {T <: Real}
+function (proxy::RKOCEvaluatorAdjointProxy{T})(x::Vector{T}) where {T<:Real}
     jacobian = Matrix{T}(undef,
-                         proxy.evaluator.num_constrs, proxy.evaluator.num_vars)
+        proxy.evaluator.num_constrs, proxy.evaluator.num_vars)
     evaluate_error_jacobian!(jacobian, x, proxy.evaluator)
     jacobian
 end
 
 ############################################################## METHOD INSPECTION
 
-@inline function norm2(x::Vector{T}, n::Int)::T where {T <: Number}
+@inline function norm2(x::Vector{T}, n::Int)::T where {T<:Number}
     result = zero(float(real(T)))
-    @simd for i = 1 : n
+    @simd for i = 1:n
         @inbounds result += abs2(x[i])
     end
     result
 end
 
-function constrain!(x::Vector{T},
-                    evaluator::RKOCEvaluator{T})::T where {T <: Real}
+function constrain!(
+    x::Vector{T}, evaluator::RKOCEvaluator{T}
+)::T where {T<:Real}
     num_vars, num_constrs = evaluator.num_vars, evaluator.num_constrs
     x_new = Vector{T}(undef, num_vars)
     residual = Vector{T}(undef, num_constrs)
@@ -857,13 +917,13 @@ function constrain!(x::Vector{T},
     while true
         evaluate_error_jacobian!(jacobian, x, evaluator)
         ldiv!(direction, qrfactUnblocked!(jacobian), residual)
-        @simd ivdep for i = 1 : num_vars
+        @simd ivdep for i = 1:num_vars
             @inbounds x_new[i] = x[i] - direction[i]
         end
         evaluate_error_coefficients!(residual, x_new, evaluator)
         obj_new = norm2(residual, num_constrs)
         if obj_new < obj_old
-            @simd ivdep for i = 1 : num_vars
+            @simd ivdep for i = 1:num_vars
                 @inbounds x[i] = x_new[i]
             end
             obj_old = obj_new
@@ -873,19 +933,14 @@ function constrain!(x::Vector{T},
     end
 end
 
-function compute_order!(x::Vector{T}, threshold::T; verbose::Bool=false,
-                        prefix::String="")::Int where {T <: Real}
+function compute_order!(
+    x::Vector{T}, threshold::T
+)::Int where {T<:Real}
     num_stages = compute_stages(x)
     order = 2
     while true
-        # rmk(prefix, "Deriving conditions for order ", order, "...";
-        #     verbose=verbose)
         evaluator = RKOCEvaluator{T}(order, num_stages)
-        # rmk(prefix, "Testing constraints for order ", order, "...";
-        #     verbose=verbose)
         obj_new = constrain!(x, evaluator)
-        # say(prefix, "Residual for order ", lpad(string(order), 2, ' '),
-        #     ": ", obj_new; verbose=verbose)
         if obj_new <= threshold
             order += 1
         else
@@ -894,7 +949,7 @@ function compute_order!(x::Vector{T}, threshold::T; verbose::Bool=false,
     end
 end
 
-function compute_stages(x::Vector{T})::Int where {T <: Real}
+function compute_stages(x::Vector{T})::Int where {T<:Real}
     num_stages = div(isqrt(8 * length(x) + 1) - 1, 2)
     @assert(length(x) == div(num_stages * (num_stages + 1), 2))
     num_stages
@@ -902,7 +957,7 @@ end
 
 ##################################################################### ODE SOLVER
 
-struct RKSolver{T <: Real}
+struct RKSolver{T<:Real}
     num_stages::Int
     coeffs::Vector{T}
     dimension::Int
@@ -910,38 +965,38 @@ struct RKSolver{T <: Real}
     k_temp::Matrix{T}
 end
 
-function RKSolver{T}(coeffs::Vector{T}, dimension::Int) where {T <: Real}
+function RKSolver{T}(coeffs::Vector{T}, dimension::Int) where {T<:Real}
     num_stages = compute_stages(coeffs)
     RKSolver{T}(num_stages, coeffs, dimension, Vector{T}(undef, dimension),
         Matrix{T}(undef, dimension, num_stages))
 end
 
 function runge_kutta_step!(f!, y::Vector{T}, step_size::T,
-        solver::RKSolver{T}) where {T <: Real}
+    solver::RKSolver{T}) where {T<:Real}
     s, x, dim, y_temp, k = solver.num_stages, solver.coeffs,
-        solver.dimension, solver.y_temp, solver.k_temp
+    solver.dimension, solver.y_temp, solver.k_temp
     @inbounds f!(view(k, :, 1), y)
-    @simd ivdep for d = 1 : dim
+    @simd ivdep for d = 1:dim
         @inbounds k[d, 1] *= step_size
     end
     n = 1
-    for i = 2 : s
-        @simd ivdep for d = 1 : dim
+    for i = 2:s
+        @simd ivdep for d = 1:dim
             @inbounds y_temp[d] = y[d]
         end
-        for j = 1 : i - 1
-            @simd ivdep for d = 1 : dim
+        for j = 1:i-1
+            @simd ivdep for d = 1:dim
                 @inbounds y_temp[d] += x[n] * k[d, j]
             end
             n += 1
         end
         @inbounds f!(view(k, :, i), y_temp)
-        @simd ivdep for d = 1 : dim
+        @simd ivdep for d = 1:dim
             @inbounds k[d, i] *= step_size
         end
     end
-    for i = 1 : s
-        @simd ivdep for d = 1 : dim
+    for i = 1:s
+        @simd ivdep for d = 1:dim
             @inbounds y[d] += x[n] * k[d, i]
         end
         n += 1
@@ -951,55 +1006,57 @@ end
 ########################################################## RKOC BACKPROP HELPERS
 
 function compute_butcher_weights!(m::Matrix{T}, A::Matrix{T},
-        dependencies::Vector{Pair{Int,Int}}) where {T <: Number}
+    dependencies::Vector{Pair{Int,Int}}) where {T<:Number}
     num_stages, num_constrs = size(m)
-    @inbounds for i = 1 : num_constrs
+    @inbounds for i = 1:num_constrs
         d, e = dependencies[i]
         if d == 0
-            @simd ivdep for j = 1 : num_stages
-                m[j,i] = one(T)
+            @simd ivdep for j = 1:num_stages
+                m[j, i] = one(T)
             end
         elseif e == 0
-            for j = 1 : num_stages
+            for j = 1:num_stages
                 temp = zero(T)
-                @simd for k = 1 : num_stages
-                    temp += A[j,k] * m[k,d]
+                @simd for k = 1:num_stages
+                    temp += A[j, k] * m[k, d]
                 end
-                m[j,i] = temp
+                m[j, i] = temp
             end
         else
-            @simd ivdep for j = 1 : num_stages
-                m[j,i] = m[j,d] * m[j,e]
+            @simd ivdep for j = 1:num_stages
+                m[j, i] = m[j, d] * m[j, e]
             end
         end
     end
     return m
 end
 
-function backprop_butcher_weights!(u::Matrix{T}, A::Matrix{T}, b::Vector{T},
-        m::Matrix{T}, p::Vector{T}, children::Vector{Int},
-        joined_siblings::Vector{Tuple{Int,Int}},
-        sibling_indices::Vector{Pair{Int,Int}}) where {T <: Number}
+function backprop_butcher_weights!(
+    u::Matrix{T}, A::Matrix{T}, b::Vector{T},
+    m::Matrix{T}, p::Vector{T}, children::Vector{Int},
+    joined_siblings::Vector{Tuple{Int,Int}},
+    sibling_indices::Vector{Pair{Int,Int}}
+) where {T<:Number}
     num_stages, num_constrs = size(u, 1), size(u, 2)
-    @inbounds for r = 0 : num_constrs - 1
+    @inbounds for r = 0:num_constrs-1
         i = num_constrs - r
         x = p[i]
-        @simd ivdep for j = 1 : num_stages
-            u[j,i] = x * b[j]
+        @simd ivdep for j = 1:num_stages
+            u[j, i] = x * b[j]
         end
         c = children[i]
         if c > 0
-            for j = 1 : num_stages
-                @simd for k = 1 : num_stages
-                    u[j,i] += A[k,j] * u[k,c]
+            for j = 1:num_stages
+                @simd for k = 1:num_stages
+                    u[j, i] += A[k, j] * u[k, c]
                 end
             end
         end
-        k1, k2  = sibling_indices[i]
-        for k = k1 : k2
+        k1, k2 = sibling_indices[i]
+        for k = k1:k2
             (s, t) = joined_siblings[k]
-            @simd ivdep for j = 1 : num_stages
-                u[j,i] += m[j,s] .* u[j,t]
+            @simd ivdep for j = 1:num_stages
+                u[j, i] += m[j, s] .* u[j, t]
             end
         end
     end
@@ -1022,7 +1079,7 @@ end
 
 ################################################################## RKOC BACKPROP
 
-struct RKOCBackpropEvaluator{T <: Real}
+struct RKOCBackpropEvaluator{T<:Real}
     order::Int
     num_stages::Int
     num_constrs::Int
@@ -1051,7 +1108,7 @@ function pair_deps(dependencies::Vector{Vector{Int}})::Vector{Pair{Int,Int}}
     return result
 end
 
-function RKOCBackpropEvaluator{T}(order::Int, num_stages::Int) where {T <: Real}
+function RKOCBackpropEvaluator{T}(order::Int, num_stages::Int) where {T<:Real}
     trees = rooted_trees(order)
     num_constrs = sum(length.(trees))
     dependencies = dependency_table(trees)
@@ -1059,56 +1116,60 @@ function RKOCBackpropEvaluator{T}(order::Int, num_stages::Int) where {T <: Real}
     ends = cumsum(length.(siblings))
     starts = vcat([0], ends[1:end-1]) .+ 1
     inv_density = inv.(T.(butcher_density.(vcat(trees...))))
-    RKOCBackpropEvaluator(order, num_stages, num_constrs,
+    return RKOCBackpropEvaluator(
+        order, num_stages, num_constrs,
         pair_deps(dependencies), children,
         vcat(siblings...), Pair{Int,Int}.(starts, ends),
         inv_density,
         Matrix{T}(undef, num_stages, num_constrs),
         Matrix{T}(undef, num_stages, num_constrs),
         Vector{T}(undef, num_constrs),
-        Vector{T}(undef, num_constrs))
+        Vector{T}(undef, num_constrs)
+    )
 end
 
 function evaluate_residual2(A::Matrix{T}, b::Vector{T},
-        evaluator::RKOCBackpropEvaluator{T})::T where {T <: Real}
+    evaluator::RKOCBackpropEvaluator{T})::T where {T<:Real}
     num_constrs, inv_density = evaluator.num_constrs, evaluator.inv_density
     m, q = evaluator.m, evaluator.q
     compute_butcher_weights!(m, A, evaluator.dependencies)
     mul!(q, transpose(m), b)
     residual = zero(T)
-    @inbounds @simd for j = 1 : num_constrs
+    @inbounds @simd for j = 1:num_constrs
         x = q[j] - inv_density[j]
         residual += x * x
     end
-    residual
+    return residual
 end
 
-function evaluate_gradient!(gA::Matrix{T}, gb::Vector{T}, A::Matrix{T},
-        b::Vector{T}, evaluator::RKOCBackpropEvaluator{T})::T where {T <: Real}
+function evaluate_gradient!(
+    gA::Matrix{T}, gb::Vector{T}, A::Matrix{T},
+    b::Vector{T}, evaluator::RKOCBackpropEvaluator{T}
+)::T where {T<:Real}
     num_stages, num_constrs = evaluator.num_stages, evaluator.num_constrs
     inv_density, children = evaluator.inv_density, evaluator.children
     m, u, p, q = evaluator.m, evaluator.u, evaluator.p, evaluator.q
     compute_butcher_weights!(m, A, evaluator.dependencies)
     mul!(q, transpose(m), b)
     residual = zero(T)
-    @inbounds @simd for j = 1 : num_constrs
+    @inbounds @simd for j = 1:num_constrs
         x = q[j] - inv_density[j]
         residual += x * x
         p[j] = x + x
     end
     backprop_butcher_weights!(u, A, b, m, p, children,
         evaluator.joined_siblings, evaluator.sibling_indices)
-    @inbounds for t = 1 : num_stages
-        @simd ivdep for s = 1 : num_stages
-            gA[s,t] = zero(T)
+    @inbounds for t = 1:num_stages
+        @simd ivdep for s = 1:num_stages
+            gA[s, t] = zero(T)
         end
     end
-    @inbounds for i = 1 : num_constrs
+    @inbounds for i = 1:num_constrs
         j = children[i]
         if j > 0
-            for t = 1 : num_stages
-                @simd ivdep for s = 1 : num_stages
-                    gA[s,t] += u[s,j] * m[t,i]
+            for t = 1:num_stages
+                @simd ivdep for s = 1:num_stages
+                    gA[s, t] += u[s, j] * m[t, i]
                 end
             end
         end
@@ -1119,74 +1180,78 @@ end
 
 ################################################### IMPLICIT/EXPLICIT CONVERSION
 
-function populate_explicit!(A::Matrix{T}, b::Vector{T}, x::Vector{T},
-        n::Int)::Nothing where {T <: Number}
+function populate_explicit!(
+    A::Matrix{T}, b::Vector{T}, x::Vector{T}, n::Int
+)::Nothing where {T<:Number}
     k = 0
-    for i = 1 : n
-        @simd ivdep for j = 1 : i - 1
-            @inbounds A[i,j] = x[k + j]
+    for i = 1:n
+        @simd ivdep for j = 1:i-1
+            @inbounds A[i, j] = x[k+j]
         end
         k += i - 1
-        @simd ivdep for j = i : n
-            @inbounds A[i,j] = zero(T)
+        @simd ivdep for j = i:n
+            @inbounds A[i, j] = zero(T)
         end
     end
-    @simd ivdep for i = 1 : n
-        @inbounds b[i] = x[k + i]
+    @simd ivdep for i = 1:n
+        @inbounds b[i] = x[k+i]
     end
 end
 
-function populate_explicit!(x::Vector{T}, A::Matrix{T}, b::Vector{T},
-        n::Int)::Nothing where {T <: Number}
+function populate_explicit!(
+    x::Vector{T}, A::Matrix{T}, b::Vector{T}, n::Int
+)::Nothing where {T<:Number}
     k = 0
-    for i = 2 : n
-        @simd ivdep for j = 1 : i - 1
-            @inbounds x[k + j] = A[i,j]
+    for i = 2:n
+        @simd ivdep for j = 1:i-1
+            @inbounds x[k+j] = A[i, j]
         end
         k += i - 1
     end
-    @simd ivdep for i = 1 : n
-        @inbounds x[k + i] = b[i]
+    @simd ivdep for i = 1:n
+        @inbounds x[k+i] = b[i]
     end
 end
 
-function populate_implicit!(A::Matrix{T}, b::Vector{T}, x::Vector{T},
-        n::Int)::Nothing where {T <: Number}
+function populate_implicit!(
+    A::Matrix{T}, b::Vector{T}, x::Vector{T}, n::Int
+)::Nothing where {T<:Number}
     n2 = n * n
-    @simd ivdep for i = 1 : n2
+    @simd ivdep for i = 1:n2
         @inbounds A[i] = x[i]
     end
-    @simd ivdep for i = 1 : n
-        @inbounds b[i] = x[n2 + i]
+    @simd ivdep for i = 1:n
+        @inbounds b[i] = x[n2+i]
     end
 end
 
-function populate_implicit!(x::Vector{T}, A::Matrix{T}, b::Vector{T},
-        n::Int)::Nothing where {T <: Number}
+function populate_implicit!(
+    x::Vector{T}, A::Matrix{T}, b::Vector{T}, n::Int
+)::Nothing where {T<:Number}
     n2 = n * n
-    @simd ivdep for i = 1 : n2
+    @simd ivdep for i = 1:n2
         @inbounds x[i] = A[i]
     end
-    @simd ivdep for i = 1 : n
-        @inbounds x[n2 + i] = b[i]
+    @simd ivdep for i = 1:n
+        @inbounds x[n2+i] = b[i]
     end
 end
 
 ##################################################### BACKPROP FUNCTOR INTERFACE
 
-struct RKOCExplicitBackpropObjectiveFunctor{T <: Real}
+struct RKOCExplicitBackpropObjectiveFunctor{T<:Real}
     evaluator::RKOCBackpropEvaluator{T}
     A::Matrix{T}
     b::Vector{T}
 end
 
-struct RKOCImplicitBackpropObjectiveFunctor{T <: Real}
+struct RKOCImplicitBackpropObjectiveFunctor{T<:Real}
     evaluator::RKOCBackpropEvaluator{T}
     A::Matrix{T}
     b::Vector{T}
 end
 
-struct RKOCExplicitBackpropGradientFunctor{T <: Real}
+struct RKOCExplicitBackpropGradientFunctor{T<:Real}
     evaluator::RKOCBackpropEvaluator{T}
     A::Matrix{T}
     b::Vector{T}
@@ -1194,7 +1259,7 @@ struct RKOCExplicitBackpropGradientFunctor{T <: Real}
     gb::Vector{T}
 end
 
-struct RKOCImplicitBackpropGradientFunctor{T <: Real}
+struct RKOCImplicitBackpropGradientFunctor{T<:Real}
     evaluator::RKOCBackpropEvaluator{T}
     A::Matrix{T}
     b::Vector{T}
@@ -1203,21 +1268,21 @@ struct RKOCImplicitBackpropGradientFunctor{T <: Real}
 end
 
 @inline function (of::RKOCExplicitBackpropObjectiveFunctor{T})(
-        x::Vector{T})::T where {T <: Real}
+    x::Vector{T})::T where {T<:Real}
     A, b, evaluator = of.A, of.b, of.evaluator
     populate_explicit!(A, b, x, evaluator.num_stages)
     return evaluate_residual2(A, b, evaluator)
 end
 
 @inline function (of::RKOCImplicitBackpropObjectiveFunctor{T})(
-        x::Vector{T})::T where {T <: Real}
+    x::Vector{T})::T where {T<:Real}
     A, b, evaluator = of.A, of.b, of.evaluator
     populate_implicit!(A, b, x, evaluator.num_stages)
     return evaluate_residual2(A, b, evaluator)
 end
 
 @inline function (gf::RKOCExplicitBackpropGradientFunctor{T})(
-        gx::Vector{T}, x::Vector{T})::T where {T <: Real}
+    gx::Vector{T}, x::Vector{T})::T where {T<:Real}
     A, b, gA, gb, evaluator = gf.A, gf.b, gf.gA, gf.gb, gf.evaluator
     populate_explicit!(A, b, x, evaluator.num_stages)
     result = evaluate_gradient!(gA, gb, A, b, evaluator)
@@ -1226,7 +1291,7 @@ end
 end
 
 @inline function (gf::RKOCImplicitBackpropGradientFunctor{T})(
-        gx::Vector{T}, x::Vector{T})::T where {T <: Real}
+    gx::Vector{T}, x::Vector{T})::T where {T<:Real}
     A, b, gA, gb, evaluator = gf.A, gf.b, gf.gA, gf.gb, gf.evaluator
     populate_implicit!(A, b, x, evaluator.num_stages)
     result = evaluate_gradient!(gA, gb, A, b, evaluator)
@@ -1235,25 +1300,29 @@ end
 end
 
 function rkoc_explicit_backprop_functors(::Type{T}, order::Int,
-                                         num_stages::Int) where {T <: Real}
+    num_stages::Int) where {T<:Real}
     evaluator = RKOCBackpropEvaluator{T}(order, num_stages)
     A = Matrix{T}(undef, num_stages, num_stages)
     b = Vector{T}(undef, num_stages)
     gA = Matrix{T}(undef, num_stages, num_stages)
     gb = Vector{T}(undef, num_stages)
-    return RKOCExplicitBackpropObjectiveFunctor{T}(evaluator, A, b),
-           RKOCExplicitBackpropGradientFunctor{T}(evaluator, A, b, gA, gb)
+    return (
+        RKOCExplicitBackpropObjectiveFunctor{T}(evaluator, A, b),
+        RKOCExplicitBackpropGradientFunctor{T}(evaluator, A, b, gA, gb)
+    )
 end
 
 function rkoc_implicit_backprop_functors(::Type{T}, order::Int,
-                                         num_stages::Int) where {T <: Real}
+    num_stages::Int) where {T<:Real}
     evaluator = RKOCBackpropEvaluator{T}(order, num_stages)
     A = Matrix{T}(undef, num_stages, num_stages)
     b = Vector{T}(undef, num_stages)
     gA = Matrix{T}(undef, num_stages, num_stages)
     gb = Vector{T}(undef, num_stages)
-    return RKOCImplicitBackpropObjectiveFunctor{T}(evaluator, A, b),
-           RKOCImplicitBackpropGradientFunctor{T}(evaluator, A, b, gA, gb)
+    return (
+        RKOCImplicitBackpropObjectiveFunctor{T}(evaluator, A, b),
+        RKOCImplicitBackpropGradientFunctor{T}(evaluator, A, b, gA, gb)
+    )
 end
 
 end # module RungeKuttaToolKit
