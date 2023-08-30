@@ -190,7 +190,8 @@ function tree_index_table(
 end
 
 function dependency_table(
-    trees_of_order::Vector{Vector{RootedTree}})::Vector{Vector{Int}}
+    trees_of_order::Vector{Vector{RootedTree}}
+)::Vector{Vector{Int}}
     order = length(trees_of_order)
     tree_index = tree_index_table(trees_of_order)
     dependencies = Vector{Int}[]
