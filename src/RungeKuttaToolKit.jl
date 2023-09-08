@@ -1,5 +1,105 @@
 module RungeKuttaToolKit
 
+
+struct LevelSequenceIterator
+    n::Int
+end
+
+
+Base.eltype(::Type{LevelSequenceIterator}) = Vector{Int}
+
+
+function Base.length(iter::LevelSequenceIterator)
+    n = iter.n
+    if n <= 0
+        return 0
+    else
+        x = Vector{Int}(undef, n)
+        @inbounds begin
+            x[1] = 1
+            for i = 2:n
+                result = 0
+                for j = 1:i-1
+                    accumulator = 0
+                    for d = 1:j
+                        if j % d == 0
+                            accumulator += d * x[d]
+                        end
+                    end
+                    result += accumulator * x[i-j]
+                end
+                x[i] = div(result, i - 1)
+            end
+            return x[n]
+        end
+    end
+end
+
+
+function Base.iterate(iter::LevelSequenceIterator)
+    # This function is based on the GENERATE-FIRST-TREE
+    # algorithm from Figure 3 of the following paper:
+    # CONSTANT TIME GENERATION OF ROOTED TREES
+    # TERRY BEYER AND SANDRA MITCHELL HEDETNIEMI
+    # SIAM J. COMPUT. Vol. 9, No. 4, November 1980
+    n = iter.n
+    if n <= 0
+        return nothing
+    end
+    L = Vector{Int}(undef, n)
+    PREV = Vector{Int}(undef, n - 1)
+    SAVE = Vector{Int}(undef, n - 1)
+    @inbounds begin
+        @simd ivdep for i = 1:n
+            L[i] = i
+        end
+        @simd ivdep for i = 1:n-1
+            PREV[i] = i
+        end
+        @simd ivdep for i = 1:n-1
+            SAVE[i] = 0
+        end
+    end
+    return (copy(L), (L, PREV, SAVE, ifelse(n <= 2, 1, n)))
+end
+
+
+function Base.iterate(
+    iter::LevelSequenceIterator,
+    state::Tuple{Vector{Int},Vector{Int},Vector{Int},Int}
+)
+    # This function is based on the GENERATE-NEXT-TREE
+    # algorithm from Figure 3 of the following paper:
+    # CONSTANT TIME GENERATION OF ROOTED TREES
+    # TERRY BEYER AND SANDRA MITCHELL HEDETNIEMI
+    # SIAM J. COMPUT. Vol. 9, No. 4, November 1980
+    (L, PREV, SAVE, p) = state
+    if p == 1
+        return nothing
+    end
+    n = iter.n
+    @inbounds begin
+        L[p] -= 1
+        if (p < n) && (L[p] != 2 || L[p-1] != 2)
+            diff = p - PREV[L[p]]
+            while p < n
+                SAVE[p] = PREV[L[p]]
+                PREV[L[p]] = p
+                p += 1
+                L[p] = L[p-diff]
+            end
+        end
+        while L[p] == 2
+            p -= 1
+            PREV[L[p]] = SAVE[p]
+        end
+    end
+    return (copy(L), (L, PREV, SAVE, p))
+end
+
+
+module Legacy
+
 export RKOCEvaluator, evaluate_residual!, evaluate_jacobian!,
     evaluate_error_coefficients!, evaluate_error_jacobian!,
     constrain!, compute_order!, compute_stages,
@@ -1325,5 +1425,7 @@ function rkoc_implicit_backprop_functors(::Type{T}, order::Int,
         RKOCImplicitBackpropGradientFunctor{T}(evaluator, A, b, gA, gb)
     )
 end
+
+end # module Legacy
 
 end # module RungeKuttaToolKit
