@@ -1,13 +1,64 @@
 module RungeKuttaToolKit
 
+################################################################### BIPARTITIONS
+
+export BipartitionIterator
+
+struct BipartitionIterator{T}
+    items::Vector{T}
+end
+
+Base.eltype(::Type{BipartitionIterator{T}}) where {T} =
+    Tuple{Vector{T},Vector{T}}
+
+function Base.length(iter::BipartitionIterator{T}) where {T}
+    n = length(iter.items)
+    if n <= 1
+        return 1
+    else
+        return (1 << (length(iter.items) - 1)) - 1
+    end
+end
+
+function Base.iterate(iter::BipartitionIterator{T}) where {T}
+    n = length(iter.items)
+    if iszero(n)
+        return ((T[], T[]), zero(UInt))
+    end
+    index = (one(UInt) << (n - 1)) - one(UInt)
+    left = T[@inbounds iter.items[1]]
+    right = Vector{T}(undef, n - 1)
+    @simd ivdep for i = 1:n-1
+        @inbounds right[i] = iter.items[i+1]
+    end
+    return ((left, right), index)
+end
+
+function Base.iterate(iter::BipartitionIterator{T}, index::UInt) where {T}
+    if iszero(index & ~one(UInt))
+        return nothing
+    end
+    n = length(iter.items)
+    index -= one(UInt)
+    next_index = index
+    left = T[@inbounds iter.items[1]]
+    right = T[]
+    @inbounds for i = 2:n
+        push!(ifelse(iszero(index & one(UInt)), left, right), iter.items[i])
+        index >>= one(UInt)
+    end
+    return ((left, right), next_index)
+end
+
+################################## LEVEL SEQUENCE REPRESENTATION OF ROOTED TREES
+
+export LevelSequenceIterator
 
 struct LevelSequenceIterator
     n::Int
 end
 
-
 Base.eltype(::Type{LevelSequenceIterator}) = Vector{Int}
-
 
 function Base.length(iter::LevelSequenceIterator)
     n = iter.n
@@ -35,7 +86,6 @@ function Base.length(iter::LevelSequenceIterator)
     end
 end
 
-
 function Base.iterate(iter::LevelSequenceIterator)
     # This function is based on the GENERATE-FIRST-TREE
     # algorithm from Figure 3 of the following paper:
@@ -62,7 +112,6 @@ function Base.iterate(iter::LevelSequenceIterator)
     end
     return (copy(L), (L, PREV, SAVE, ifelse(n <= 2, 1, n)))
 end
-
 
 function Base.iterate(
     iter::LevelSequenceIterator,
@@ -97,6 +146,80 @@ function Base.iterate(
     return (copy(L), (L, PREV, SAVE, p))
 end
 
+################################################### MANIPULATING LEVEL SEQUENCES
+
+export count_legs, extract_legs, is_canonical, push_necessary_subtrees!
+
+function count_legs(level_sequence::Vector{Int})
+    n = length(level_sequence)
+    @assert n > 0
+    @inbounds begin
+        @assert isone(level_sequence[1])
+        result = 0
+        @simd for i = 2:n
+            if level_sequence[i] == 2
+                result += 1
+            end
+        end
+        return result
+    end
+end
+
+function extract_legs(level_sequence::Vector{Int})
+    n = length(level_sequence)
+    @assert n > 0
+    @inbounds begin
+        @assert level_sequence[1] == 1
+        result = Vector{Vector{Int}}(undef, count_legs(level_sequence))
+        if n > 1
+            i = 1
+            last = 2
+            for j = 3:n
+                if level_sequence[j] == 2
+                    result[i] = level_sequence[last:j-1] .- 1
+                    i += 1
+                    last = j
+                end
+            end
+            result[i] = level_sequence[last:end] .- 1
+        end
+        return result
+    end
+end
+
+function is_canonical(level_sequence::Vector{Int})
+    legs = extract_legs(level_sequence)
+    if !issorted(legs; rev=true)
+        return false
+    end
+    for leg in legs
+        if !is_canonical(leg)
+            return false
+        end
+    end
+    return true
+end
+
+function push_necessary_subtrees!(
+    result::Set{Vector{Int}}, tree::Vector{Int}
+)
+    legs = extract_legs(tree)
+    if length(legs) == 1
+        push!(result, tree)
+        push!(result, only(legs))
+        push_necessary_subtrees!(result, only(legs))
+    else
+        push!(result, tree)
+        for leg in legs
+            child = vcat([1], leg .+ 1)
+            push!(result, child)
+            push_necessary_subtrees!(result, child)
+        end
+    end
+    return result
+end
+
+################################################################################
 
 module Legacy
 
@@ -231,22 +354,6 @@ function rooted_trees(n::Int)::Vector{Vector{RootedTree}}
         push!(result, trees)
     end
     result
-end
-
-function rooted_tree_count(n::Int)::BigInt
-    if n < 0
-        error("rooted_tree_count requires non-negative argument")
-    end
-    if n == 0
-        return 0
-    end
-    counts = zeros(Rational{BigInt}, n)
-    counts[1] = 1
-    for i = 2:n, k = 1:i-1, m = 1:div(i - 1, k)
-        @inbounds counts[i] += k * counts[k] * counts[i-k*m] // (i - 1)
-    end
-    @assert all(isone(denominator(c)) for c in counts)
-    sum(numerator.(counts))
 end
 
 function butcher_density(tree::RootedTree)::Int
