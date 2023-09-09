@@ -148,7 +148,7 @@ end
 
 ################################################### MANIPULATING LEVEL SEQUENCES
 
-export count_legs, extract_legs, is_canonical, push_necessary_subtrees!
+export count_legs, extract_legs, is_canonical, necessary_subtrees
 
 function count_legs(level_sequence::Vector{Int})
     n = length(level_sequence)
@@ -217,6 +217,27 @@ function push_necessary_subtrees!(
         end
     end
     return result
+end
+
+function tree_order(a::Vector{Int}, b::Vector{Int})
+    len_a = length(a)
+    len_b = length(b)
+    if len_a < len_b
+        return true
+    elseif len_a > len_b
+        return false
+    else
+        return a > b
+    end
+end
+
+function necessary_subtrees(trees::Vector{Vector{Int}})
+    result = Set{Vector{Int}}()
+    for tree in trees
+        push!(result, tree)
+        push_necessary_subtrees!(result, tree)
+    end
+    return sort!(collect(result); lt=tree_order)
 end
 
 ################################################################################
