@@ -50,7 +50,7 @@ function Base.iterate(iter::BipartitionIterator{T}, index::UInt) where {T}
     return ((left, right), next_index)
 end
 
-################################## LEVEL SEQUENCE REPRESENTATION OF ROOTED TREES
+##################################################### GENERATING LEVEL SEQUENCES
 
 export LevelSequenceIterator
 
@@ -58,7 +58,9 @@ struct LevelSequenceIterator
     n::Int
 end
 
-Base.eltype(::Type{LevelSequenceIterator}) = Vector{Int}
+const LevelSequence = Vector{Int}
+
+Base.eltype(::Type{LevelSequenceIterator}) = LevelSequence
 
 function Base.length(iter::LevelSequenceIterator)
     n = iter.n
@@ -96,7 +98,7 @@ function Base.iterate(iter::LevelSequenceIterator)
     if n <= 0
         return nothing
     end
-    L = Vector{Int}(undef, n)
+    L = LevelSequence(undef, n)
     PREV = Vector{Int}(undef, n - 1)
     SAVE = Vector{Int}(undef, n - 1)
     @inbounds begin
@@ -115,7 +117,7 @@ end
 
 function Base.iterate(
     iter::LevelSequenceIterator,
-    state::Tuple{Vector{Int},Vector{Int},Vector{Int},Int}
+    state::Tuple{LevelSequence,Vector{Int},Vector{Int},Int}
 )
     # This function is based on the GENERATE-NEXT-TREE
     # algorithm from Figure 3 of the following paper:
@@ -148,9 +150,9 @@ end
 
 ################################################### MANIPULATING LEVEL SEQUENCES
 
-export count_legs, extract_legs, is_canonical, necessary_subtrees
+export count_legs, extract_legs, is_canonical
 
-function count_legs(level_sequence::Vector{Int})
+function count_legs(level_sequence::LevelSequence)
     n = length(level_sequence)
     @assert n > 0
     @inbounds begin
@@ -165,12 +167,12 @@ function count_legs(level_sequence::Vector{Int})
     end
 end
 
-function extract_legs(level_sequence::Vector{Int})
+function extract_legs(level_sequence::LevelSequence)
     n = length(level_sequence)
     @assert n > 0
     @inbounds begin
         @assert level_sequence[1] == 1
-        result = Vector{Vector{Int}}(undef, count_legs(level_sequence))
+        result = Vector{LevelSequence}(undef, count_legs(level_sequence))
         if n > 1
             i = 1
             last = 2
@@ -187,7 +189,7 @@ function extract_legs(level_sequence::Vector{Int})
     end
 end
 
-function is_canonical(level_sequence::Vector{Int})
+function is_canonical(level_sequence::LevelSequence)
     legs = extract_legs(level_sequence)
     if !issorted(legs; rev=true)
         return false
@@ -200,8 +202,134 @@ function is_canonical(level_sequence::Vector{Int})
     return true
 end
 
+########################################################### BUTCHER INSTRUCTIONS
+
+export build_butcher_instruction_table, ButcherInstruction
+
+struct ButcherInstruction
+    left::Int
+    right::Int
+    depth::Int
+    deficit::Int
+end
+
+function find_butcher_instruction(
+    instructions::Vector{ButcherInstruction},
+    subtree_indices::Dict{LevelSequence,Int},
+    tree::LevelSequence
+)
+    legs = extract_legs(tree)
+    if isempty(legs)
+        return ButcherInstruction(-1, -1, 1, 0)
+    elseif isone(length(legs))
+        leg = only(legs)
+        if haskey(subtree_indices, leg)
+            index = subtree_indices[leg]
+            instruction = instructions[index]
+            return ButcherInstruction(
+                index, -1, instruction.depth + 1, instruction.deficit + 1
+            )
+        else
+            return nothing
+        end
+    else
+        candidates = ButcherInstruction[]
+        for (left_legs, right_legs) in BipartitionIterator(legs)
+            left_leg = reduce(vcat, (leg .+ 1 for leg in left_legs); init=[1])
+            if haskey(subtree_indices, left_leg)
+                right_leg = reduce(
+                    vcat, (leg .+ 1 for leg in right_legs); init=[1]
+                )
+                if haskey(subtree_indices, right_leg)
+                    left_index = subtree_indices[left_leg]
+                    right_index = subtree_indices[right_leg]
+                    left_instruction = instructions[left_index]
+                    right_instruction = instructions[right_index]
+                    depth = max(
+                        left_instruction.depth, right_instruction.depth
+                    ) + 1
+                    deficit = max(
+                        left_instruction.deficit, right_instruction.deficit
+                    )
+                    push!(candidates, ButcherInstruction(
+                        left_index, right_index, depth, deficit
+                    ))
+                end
+            end
+        end
+        if isempty(candidates)
+            return nothing
+        else
+            return first(sort!(
+                candidates; by=(instruction -> instruction.depth)
+            ))
+        end
+    end
+end
+
+function push_butcher_instructions!(
+    instructions::Vector{ButcherInstruction},
+    subtree_indices::Dict{LevelSequence,Int},
+    tree::LevelSequence
+)
+    instruction = find_butcher_instruction(instructions, subtree_indices, tree)
+    if isnothing(instruction)
+        legs = extract_legs(tree)
+        @assert !isempty(legs)
+        if isone(length(legs))
+            push_butcher_instructions!(
+                instructions, subtree_indices, only(legs)
+            )
+        else
+            # TODO: What is the optimal policy for splitting a tree into left
+            # and right subtrees? Ideally, we would like subtrees to be reused,
+            # and we also want to minimize depth for parallelism. For now, we
+            # always put one leg on the left and remaining legs on the right.
+            left_leg = vcat([1], legs[1] .+ 1)
+            right_leg = reduce(
+                vcat, (leg .+ 1 for leg in legs[2:end]); init=[1]
+            )
+            push_butcher_instructions!(
+                instructions, subtree_indices, left_leg
+            )
+            push_butcher_instructions!(
+                instructions, subtree_indices, right_leg
+            )
+        end
+    end
+    instruction = find_butcher_instruction(instructions, subtree_indices, tree)
+    @assert !isnothing(instruction)
+    push!(instructions, instruction)
+    subtree_indices[tree] = length(instructions)
+    return instruction
+end
+
+function permute_butcher_instruction(
+    instruction::ButcherInstruction,
+    permutation::Vector{Int}
+)
+    if instruction.left == -1
+        @assert instruction.right == -1
+        return instruction
+    elseif instruction.right == -1
+        return ButcherInstruction(
+            permutation[instruction.left],
+            instruction.right,
+            instruction.depth,
+            instruction.deficit
+        )
+    else
+        return ButcherInstruction(
+            permutation[instruction.left],
+            permutation[instruction.right],
+            instruction.depth,
+            instruction.deficit
+        )
+    end
+end
+
 function push_necessary_subtrees!(
-    result::Set{Vector{Int}}, tree::Vector{Int}
+    result::Set{LevelSequence}, tree::LevelSequence
 )
     legs = extract_legs(tree)
     if length(legs) == 1
@@ -219,7 +347,7 @@ function push_necessary_subtrees!(
     return result
 end
 
-function tree_order(a::Vector{Int}, b::Vector{Int})
+function tree_order(a::LevelSequence, b::LevelSequence)
     len_a = length(a)
     len_b = length(b)
     if len_a < len_b
@@ -231,13 +359,47 @@ function tree_order(a::Vector{Int}, b::Vector{Int})
     end
 end
 
-function necessary_subtrees(trees::Vector{Vector{Int}})
-    result = Set{Vector{Int}}()
+function necessary_subtrees(trees::Vector{LevelSequence})
+    result = Set{LevelSequence}()
     for tree in trees
         push!(result, tree)
         push_necessary_subtrees!(result, tree)
     end
     return sort!(collect(result); lt=tree_order)
+end
+
+function build_butcher_instruction_table(
+    trees::Vector{LevelSequence};
+    optimize::Bool=true,
+    sort_by_depth::Bool=true
+)
+    instructions = ButcherInstruction[]
+    subtree_indices = Dict{LevelSequence,Int}()
+    if optimize
+        for tree in necessary_subtrees(trees)
+            push_butcher_instructions!(instructions, subtree_indices, tree)
+        end
+    else
+        for tree in trees
+            push_butcher_instructions!(instructions, subtree_indices, tree)
+        end
+    end
+    if sort_by_depth
+        permutation = sortperm(
+            instructions;
+            by=(instruction -> instruction.depth)
+        )
+        inverse_permutation = invperm(permutation)
+        return (
+            [
+                permute_butcher_instruction(instruction, inverse_permutation)
+                for instruction in instructions[permutation]
+            ],
+            [inverse_permutation[subtree_indices[tree]] for tree in trees]
+        )
+    else
+        return (instructions, [subtree_indices[tree] for tree in trees])
+    end
 end
 
 ################################################################################
