@@ -150,7 +150,8 @@ end
 
 ################################################### MANIPULATING LEVEL SEQUENCES
 
-export count_legs, extract_legs, is_canonical
+export count_legs, extract_legs, is_canonical,
+    butcher_density, butcher_symmetry
 
 function count_legs(level_sequence::LevelSequence)
     n = length(level_sequence)
@@ -202,7 +203,31 @@ function is_canonical(level_sequence::LevelSequence)
     return true
 end
 
-########################################################### BUTCHER INSTRUCTIONS
+function butcher_density(tree::LevelSequence)
+    result = length(tree)
+    for leg in extract_legs(tree)
+        result *= butcher_density(leg)
+    end
+    return result
+end
+
+function butcher_symmetry(tree::LevelSequence)
+    leg_counts = Dict{LevelSequence,Int}()
+    for leg in extract_legs(tree)
+        if haskey(leg_counts, leg)
+            leg_counts[leg] += 1
+        else
+            leg_counts[leg] = 1
+        end
+    end
+    result = 1
+    for (leg, count) in leg_counts
+        result *= butcher_symmetry(leg) * factorial(count)
+    end
+    return result
+end
+
+############################################################# INSTRUCTION TABLES
 
 export build_butcher_instruction_table, ButcherInstruction
 
