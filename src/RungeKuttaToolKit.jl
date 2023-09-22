@@ -52,7 +52,7 @@ end
 
 ##################################################### GENERATING LEVEL SEQUENCES
 
-export LevelSequenceIterator
+export LevelSequenceIterator, LevelSequence, all_rooted_trees
 
 struct LevelSequenceIterator
     n::Int
@@ -146,6 +146,16 @@ function Base.iterate(
         end
     end
     return (copy(L), (L, PREV, SAVE, p))
+end
+
+function all_rooted_trees(n::Int)
+    result = LevelSequence[]
+    for i = 1:n
+        for tree in LevelSequenceIterator(i)
+            push!(result, tree)
+        end
+    end
+    return result
 end
 
 ################################################### MANIPULATING LEVEL SEQUENCES
@@ -424,6 +434,111 @@ function build_butcher_instruction_table(
         )
     else
         return (instructions, [subtree_indices[tree] for tree in trees])
+    end
+end
+
+################################################################################
+
+function test_instruction_table(
+    trees::Vector{LevelSequence},
+    instructions::Vector{ButcherInstruction},
+    indices::Vector{Int}
+)
+    tree_table = LevelSequence[]
+    for instruction in instructions
+        if instruction.left == -1
+            @assert instruction.right == -1
+            push!(tree_table, [1])
+        elseif instruction.right == -1
+            push!(tree_table, vcat([1], tree_table[instruction.left] .+ 1))
+        else
+            push!(tree_table, vcat(
+                [1],
+                tree_table[instruction.left][2:end],
+                tree_table[instruction.right][2:end]
+            ))
+        end
+    end
+    return tree_table[indices] == trees
+end
+
+################################################################################
+
+export RKOCEvaluator
+
+struct RKOCEvaluator{T}
+    num_stages::Int
+    instructions::Vector{ButcherInstruction}
+    indices::Vector{Int}
+    inv_gamma::Vector{T}
+    A::Matrix{T}
+    b::Vector{T}
+    phi::Matrix{T}
+    residuals::Vector{T}
+end
+
+function RKOCEvaluator{T}(
+    trees::Vector{LevelSequence}, num_stages::Int
+) where {T}
+    instructions, indices = build_butcher_instruction_table(trees)
+    inv_gamma = [inv(T(butcher_density(tree))) for tree in trees]
+    return RKOCEvaluator{T}(
+        num_stages,
+        instructions,
+        indices,
+        inv_gamma,
+        Matrix{T}(undef, num_stages, num_stages),
+        Vector{T}(undef, num_stages),
+        Matrix{T}(undef, num_stages, length(instructions)),
+        Vector{T}(undef, length(indices)),
+    )
+end
+
+function RKOCEvaluator{T}(order::Int, num_stages::Int) where {T}
+    return RKOCEvaluator{T}(all_rooted_trees(order), num_stages)
+end
+
+################################################################################
+
+export populate_phi!, populate_residuals!
+
+function populate_phi!(evaluator::RKOCEvaluator{T}) where {T}
+    n = evaluator.num_stages
+    A = evaluator.A
+    phi = evaluator.phi
+    @inbounds for (i, instruction) in enumerate(evaluator.instructions)
+        if instruction.left == -1
+            @assert instruction.right == -1
+            @simd ivdep for j = 1:n
+                phi[j, i] = one(T)
+            end
+        elseif instruction.right == -1
+            k = instruction.left
+            for j = 1:n
+                result = zero(T)
+                @simd for l = 1:n
+                    result += A[j, l] * phi[l, k]
+                end
+                phi[j, i] = result
+            end
+        else
+            k = instruction.left
+            l = instruction.right
+            @simd ivdep for j = 1:n
+                phi[j, i] = phi[j, k] * phi[j, l]
+            end
+        end
+    end
+end
+
+function populate_residuals!(evaluator::RKOCEvaluator{T}) where {T}
+    n = evaluator.num_stages
+    @inbounds for (i, j) in enumerate(evaluator.indices)
+        result = zero(T)
+        @simd for k = 1:n
+            result += b[k] * phi[k, j]
+        end
+        residuals[i] = result - inv_gamma[i]
     end
 end
 
