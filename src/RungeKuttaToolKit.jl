@@ -502,6 +502,8 @@ end
 
 export populate_phi!, populate_residuals!
 
+using LinearAlgebra: mul!
+
 function populate_phi!(evaluator::RKOCEvaluator{T}) where {T}
     n = evaluator.num_stages
     A = evaluator.A
@@ -514,13 +516,7 @@ function populate_phi!(evaluator::RKOCEvaluator{T}) where {T}
             end
         elseif instruction.right == -1
             k = instruction.left
-            for j = 1:n
-                result = zero(T)
-                @simd for l = 1:n
-                    result += A[j, l] * phi[l, k]
-                end
-                phi[j, i] = result
-            end
+            mul!(view(phi, :, i), A, view(phi, :, k))
         else
             k = instruction.left
             l = instruction.right
