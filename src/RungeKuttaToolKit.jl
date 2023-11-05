@@ -1,15 +1,20 @@
 module RungeKuttaToolKit
 
+
 ################################################################### BIPARTITIONS
 
+
 export BipartitionIterator
+
 
 struct BipartitionIterator{T}
     items::Vector{T}
 end
 
+
 Base.eltype(::Type{BipartitionIterator{T}}) where {T} =
     Tuple{Vector{T},Vector{T}}
+
 
 function Base.length(iter::BipartitionIterator{T}) where {T}
     n = length(iter.items)
@@ -19,6 +24,7 @@ function Base.length(iter::BipartitionIterator{T}) where {T}
         return (1 << (length(iter.items) - 1)) - 1
     end
 end
+
 
 function Base.iterate(iter::BipartitionIterator{T}) where {T}
     n = length(iter.items)
@@ -33,6 +39,7 @@ function Base.iterate(iter::BipartitionIterator{T}) where {T}
     end
     return ((left, right), index)
 end
+
 
 function Base.iterate(iter::BipartitionIterator{T}, index::UInt) where {T}
     if iszero(index & ~one(UInt))
@@ -50,17 +57,23 @@ function Base.iterate(iter::BipartitionIterator{T}, index::UInt) where {T}
     return ((left, right), next_index)
 end
 
+
 ##################################################### GENERATING LEVEL SEQUENCES
 
+
 export LevelSequenceIterator, LevelSequence, all_rooted_trees
+
 
 struct LevelSequenceIterator
     n::Int
 end
 
+
 const LevelSequence = Vector{Int}
 
+
 Base.eltype(::Type{LevelSequenceIterator}) = LevelSequence
+
 
 function Base.length(iter::LevelSequenceIterator)
     n = iter.n
@@ -88,6 +101,7 @@ function Base.length(iter::LevelSequenceIterator)
     end
 end
 
+
 function Base.iterate(iter::LevelSequenceIterator)
     # This function is based on the GENERATE-FIRST-TREE
     # algorithm from Figure 3 of the following paper:
@@ -114,6 +128,7 @@ function Base.iterate(iter::LevelSequenceIterator)
     end
     return (copy(L), (L, PREV, SAVE, ifelse(n <= 2, 1, n)))
 end
+
 
 function Base.iterate(
     iter::LevelSequenceIterator,
@@ -148,20 +163,18 @@ function Base.iterate(
     return (copy(L), (L, PREV, SAVE, p))
 end
 
-function all_rooted_trees(n::Int)
-    result = LevelSequence[]
-    for i = 1:n
-        for tree in LevelSequenceIterator(i)
-            push!(result, tree)
-        end
-    end
-    return result
-end
+
+all_rooted_trees(n::Int) = reduce(vcat,
+    (collect(LevelSequenceIterator(i)) for i = 1:n)
+)
+
 
 ################################################### MANIPULATING LEVEL SEQUENCES
 
+
 export count_legs, extract_legs, is_canonical,
     butcher_density, butcher_symmetry
+
 
 function count_legs(level_sequence::LevelSequence)
     n = length(level_sequence)
@@ -177,6 +190,7 @@ function count_legs(level_sequence::LevelSequence)
         return result
     end
 end
+
 
 function extract_legs(level_sequence::LevelSequence)
     n = length(level_sequence)
@@ -200,6 +214,7 @@ function extract_legs(level_sequence::LevelSequence)
     end
 end
 
+
 function is_canonical(level_sequence::LevelSequence)
     legs = extract_legs(level_sequence)
     if !issorted(legs; rev=true)
@@ -213,6 +228,7 @@ function is_canonical(level_sequence::LevelSequence)
     return true
 end
 
+
 function butcher_density(tree::LevelSequence)
     result = length(tree)
     for leg in extract_legs(tree)
@@ -220,6 +236,7 @@ function butcher_density(tree::LevelSequence)
     end
     return result
 end
+
 
 function butcher_symmetry(tree::LevelSequence)
     leg_counts = Dict{LevelSequence,Int}()
@@ -237,9 +254,12 @@ function butcher_symmetry(tree::LevelSequence)
     return result
 end
 
+
 ############################################################# INSTRUCTION TABLES
 
+
 export build_butcher_instruction_table, ButcherInstruction
+
 
 struct ButcherInstruction
     left::Int
@@ -247,6 +267,7 @@ struct ButcherInstruction
     depth::Int
     deficit::Int
 end
+
 
 function find_butcher_instruction(
     instructions::Vector{ButcherInstruction},
@@ -302,6 +323,7 @@ function find_butcher_instruction(
     end
 end
 
+
 function push_butcher_instructions!(
     instructions::Vector{ButcherInstruction},
     subtree_indices::Dict{LevelSequence,Int},
@@ -339,6 +361,7 @@ function push_butcher_instructions!(
     return instruction
 end
 
+
 function permute_butcher_instruction(
     instruction::ButcherInstruction,
     permutation::Vector{Int}
@@ -363,6 +386,7 @@ function permute_butcher_instruction(
     end
 end
 
+
 function push_necessary_subtrees!(
     result::Set{LevelSequence}, tree::LevelSequence
 )
@@ -382,6 +406,7 @@ function push_necessary_subtrees!(
     return result
 end
 
+
 function tree_order(a::LevelSequence, b::LevelSequence)
     len_a = length(a)
     len_b = length(b)
@@ -394,6 +419,7 @@ function tree_order(a::LevelSequence, b::LevelSequence)
     end
 end
 
+
 function necessary_subtrees(trees::Vector{LevelSequence})
     result = Set{LevelSequence}()
     for tree in trees
@@ -402,6 +428,7 @@ function necessary_subtrees(trees::Vector{LevelSequence})
     end
     return sort!(collect(result); lt=tree_order)
 end
+
 
 function build_butcher_instruction_table(
     trees::Vector{LevelSequence};
@@ -437,7 +464,9 @@ function build_butcher_instruction_table(
     end
 end
 
+
 ################################################################################
+
 
 function test_instruction_table(
     trees::Vector{LevelSequence},
@@ -462,9 +491,12 @@ function test_instruction_table(
     return tree_table[indices] == trees
 end
 
+
 ################################################################################
 
+
 export RKOCEvaluator
+
 
 struct RKOCEvaluator{T}
     num_stages::Int
@@ -476,6 +508,7 @@ struct RKOCEvaluator{T}
     phi::Matrix{T}
     residuals::Vector{T}
 end
+
 
 function RKOCEvaluator{T}(
     trees::Vector{LevelSequence}, num_stages::Int
@@ -494,15 +527,20 @@ function RKOCEvaluator{T}(
     )
 end
 
+
 function RKOCEvaluator{T}(order::Int, num_stages::Int) where {T}
     return RKOCEvaluator{T}(all_rooted_trees(order), num_stages)
 end
 
+
 ################################################################################
+
 
 export populate_phi!, populate_residuals!
 
+
 using LinearAlgebra: mul!
+
 
 function populate_phi!(evaluator::RKOCEvaluator{T}) where {T}
     n = evaluator.num_stages
@@ -527,6 +565,7 @@ function populate_phi!(evaluator::RKOCEvaluator{T}) where {T}
     end
 end
 
+
 function populate_residuals!(evaluator::RKOCEvaluator{T}) where {T}
     n = evaluator.num_stages
     @inbounds for (i, j) in enumerate(evaluator.indices)
@@ -537,6 +576,7 @@ function populate_residuals!(evaluator::RKOCEvaluator{T}) where {T}
         residuals[i] = result - inv_gamma[i]
     end
 end
+
 
 ################################################################################
 
