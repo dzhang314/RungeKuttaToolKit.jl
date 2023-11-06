@@ -4,9 +4,6 @@ module RungeKuttaToolKit
 ################################################################### BIPARTITIONS
 
 
-export BipartitionIterator
-
-
 struct BipartitionIterator{T}
     items::Vector{T}
 end
@@ -61,7 +58,7 @@ end
 ##################################################### GENERATING LEVEL SEQUENCES
 
 
-export LevelSequenceIterator, LevelSequence, all_rooted_trees
+export LevelSequenceIterator, all_rooted_trees
 
 
 struct LevelSequenceIterator
@@ -519,7 +516,6 @@ struct RKOCEvaluator{T}
     num_stages::Int
     instructions::Vector{ButcherInstruction}
     output_indices::Vector{Int}
-    output_set::BitSet
     inv_gamma::Vector{T}
     source_indices::Vector{Int}
     child_indices::Vector{Int}
@@ -539,9 +535,8 @@ function RKOCEvaluator{T}(
     trees::Vector{LevelSequence}, num_stages::Int
 ) where {T}
     instructions, output_indices = build_butcher_instruction_table(trees)
-    output_set = BitSet(output_indices)
     inv_gamma = [inv(T(butcher_density(tree))) for tree in trees]
-    source_indices = [-1 for _ in trees]
+    source_indices = [-1 for _ in instructions]
     for (i, j) in enumerate(output_indices)
         source_indices[j] = i
     end
@@ -556,7 +551,6 @@ function RKOCEvaluator{T}(
         num_stages,
         instructions,
         output_indices,
-        output_set,
         inv_gamma,
         source_indices,
         child_indices,
@@ -704,7 +698,6 @@ end
 
 function populate_dphi!(evaluator::RKOCEvaluator{T}) where {T}
     n = evaluator.num_stages
-    output_set = evaluator.output_set
     source_indices = evaluator.source_indices
     child_indices = evaluator.child_indices
     sibling_indices = evaluator.sibling_indices
@@ -722,10 +715,8 @@ function populate_dphi!(evaluator::RKOCEvaluator{T}) where {T}
         else
             r = residuals[s]
             x = r + r
-            if k in output_set
-                @simd ivdep for j = 1:n
-                    dphi[j, k] = x * b[j]
-                end
+            @simd ivdep for j = 1:n
+                dphi[j, k] = x * b[j]
             end
         end
         c = child_indices[k]
