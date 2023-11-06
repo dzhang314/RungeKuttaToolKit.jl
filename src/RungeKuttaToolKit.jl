@@ -965,14 +965,55 @@ function (evaluator::RKOCEvaluator{T})(x::Vector{T}) where {T}
 end
 
 
+function (evaluator::RKOCEvaluatorMFV{M,T,N})(
+    x::Vector{MultiFloat{T,N}}
+) where {M,T,N}
+    A_rows = evaluator.A_rows
+    A_cols = evaluator.A_cols
+    residuals = evaluator.residuals
+    for i = 1:M
+        A_rows[i] = MultiFloatVec{M,T,N}(ntuple(
+            j -> (j < i) ? x[(((i-1)*(i-2))>>1)+j] : zero(MultiFloat{T,N}),
+            Val{M}()
+        ))
+        A_cols[i] = MultiFloatVec{M,T,N}(ntuple(
+            j -> (j > i) ? x[i+(((j-1)*(j-2))>>1)] : zero(MultiFloat{T,N}),
+            Val{M}()
+        ))
+    end
+    let i = M + 1
+        evaluator.b[] = MultiFloatVec{M,T,N}(ntuple(
+            j -> (j < i) ? x[(((i-1)*(i-2))>>1)+j] : zero(MultiFloat{T,N}),
+            Val{M}()
+        ))
+    end
+    populate_phi!(evaluator)
+    populate_residuals!(evaluator)
+    result = zero(MultiFloat{T,N})
+    @simd for i = 1:length(residuals)
+        temp = @inbounds residuals[i]
+        result += temp * temp
+    end
+    return result
+end
+
+
 struct RKOCEvaluatorAdjoint{T}
     evaluator::RKOCEvaluator{T}
 end
 
 
-function Base.adjoint(evaluator::RKOCEvaluator{T}) where {T}
-    return RKOCEvaluatorAdjoint{T}(evaluator)
+struct RKOCEvaluatorMFVAdjoint{M,T,N}
+    evaluator::RKOCEvaluatorMFV{M,T,N}
 end
+
+
+Base.adjoint(evaluator::RKOCEvaluator{T}) where {T} =
+    RKOCEvaluatorAdjoint{T}(evaluator)
+
+
+Base.adjoint(evaluator::RKOCEvaluatorMFV{M,T,N}) where {M,T,N} =
+    RKOCEvaluatorMFVAdjoint{M,T,N}(evaluator)
 
 
 function (adjoint::RKOCEvaluatorAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
@@ -991,7 +1032,57 @@ function (adjoint::RKOCEvaluatorAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T
 end
 
 
+function (adjoint::RKOCEvaluatorMFVAdjoint{M,T,N})(
+    g::Vector{MultiFloat{T,N}},
+    x::Vector{MultiFloat{T,N}}
+) where {M,T,N}
+    evaluator = adjoint.evaluator
+    A_rows = evaluator.A_rows
+    A_cols = evaluator.A_cols
+    for i = 1:M
+        A_rows[i] = MultiFloatVec{M,T,N}(ntuple(
+            j -> (j < i) ? x[(((i-1)*(i-2))>>1)+j] : zero(MultiFloat{T,N}),
+            Val{M}()
+        ))
+        A_cols[i] = MultiFloatVec{M,T,N}(ntuple(
+            j -> (j > i) ? x[i+(((j-1)*(j-2))>>1)] : zero(MultiFloat{T,N}),
+            Val{M}()
+        ))
+    end
+    let i = M + 1
+        evaluator.b[] = MultiFloatVec{M,T,N}(ntuple(
+            j -> (j < i) ? x[(((i-1)*(i-2))>>1)+j] : zero(MultiFloat{T,N}),
+            Val{M}()
+        ))
+    end
+    populate_phi!(evaluator)
+    populate_residuals!(evaluator)
+    populate_dphi!(evaluator)
+    populate_gradients!(evaluator)
+    dA_cols = evaluator.dA_cols
+    db = evaluator.db[]
+    k = 0
+    for i = 2:M
+        @simd ivdep for j = 1:i-1
+            @inbounds g[j+k] = dA_cols[j][i]
+        end
+        k += i - 1
+    end
+    @simd ivdep for i = 1:M
+        @inbounds g[i+k] = db[i]
+    end
+    return g
+end
+
+
 function (adjoint::RKOCEvaluatorAdjoint{T})(x::Vector{T}) where {T}
+    return adjoint(similar(x), x)
+end
+
+
+function (adjoint::RKOCEvaluatorMFVAdjoint{M,T,N})(
+    x::Vector{MultiFloat{T,N}}
+) where {M,T,N}
     return adjoint(similar(x), x)
 end
 
