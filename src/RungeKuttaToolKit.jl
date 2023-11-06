@@ -465,6 +465,23 @@ function build_butcher_instruction_table(
 end
 
 
+function compute_children_siblings(instructions::Vector{ButcherInstruction})
+    children = [-1 for _ in instructions]
+    siblings = [Pair{Int,Int}[] for _ in instructions]
+    for (i, instruction) in enumerate(instructions)
+        if instruction.left == -1
+            @assert instruction.right == -1
+        elseif instruction.right == -1
+            children[instruction.left] = i
+        else
+            push!(siblings[instruction.left], instruction.right => i)
+            push!(siblings[instruction.right], instruction.left => i)
+        end
+    end
+    return (children, siblings)
+end
+
+
 ################################################################################
 
 
@@ -501,11 +518,19 @@ export RKOCEvaluator
 struct RKOCEvaluator{T}
     num_stages::Int
     instructions::Vector{ButcherInstruction}
-    indices::Vector{Int}
+    output_indices::Vector{Int}
+    output_set::BitSet
     inv_gamma::Vector{T}
+    source_indices::Vector{Int}
+    child_indices::Vector{Int}
+    sibling_indices::Vector{Pair{Int,Int}}
+    sibling_ranges::Vector{UnitRange{Int}}
     A::Matrix{T}
+    dA::Matrix{T}
     b::Vector{T}
+    db::Vector{T}
     phi::Matrix{T}
+    dphi::Matrix{T}
     residuals::Vector{T}
 end
 
@@ -513,23 +538,115 @@ end
 function RKOCEvaluator{T}(
     trees::Vector{LevelSequence}, num_stages::Int
 ) where {T}
-    instructions, indices = build_butcher_instruction_table(trees)
+    instructions, output_indices = build_butcher_instruction_table(trees)
+    output_set = BitSet(output_indices)
     inv_gamma = [inv(T(butcher_density(tree))) for tree in trees]
+    source_indices = [-1 for _ in trees]
+    for (i, j) in enumerate(output_indices)
+        source_indices[j] = i
+    end
+    child_indices, sibling_lists = compute_children_siblings(instructions)
+    sibling_indices = reduce(vcat, sibling_lists)
+    end_indices = cumsum(length.(sibling_lists))
+    sibling_ranges = UnitRange{Int}.(
+        vcat([0], end_indices[1:end-1]) .+ 1,
+        end_indices
+    )
     return RKOCEvaluator{T}(
         num_stages,
         instructions,
-        indices,
+        output_indices,
+        output_set,
         inv_gamma,
+        source_indices,
+        child_indices,
+        sibling_indices,
+        sibling_ranges,
+        Matrix{T}(undef, num_stages, num_stages),
         Matrix{T}(undef, num_stages, num_stages),
         Vector{T}(undef, num_stages),
+        Vector{T}(undef, num_stages),
         Matrix{T}(undef, num_stages, length(instructions)),
-        Vector{T}(undef, length(indices)),
+        Matrix{T}(undef, num_stages, length(instructions)),
+        Vector{T}(undef, length(output_indices)),
     )
 end
 
 
 function RKOCEvaluator{T}(order::Int, num_stages::Int) where {T}
     return RKOCEvaluator{T}(all_rooted_trees(order), num_stages)
+end
+
+
+################################################################################
+
+
+function populate_explicit!(A::Matrix{T}, b::Vector{T}, x::Vector{T}) where {T}
+    n = length(b)
+    @assert size(A) == (n, n)
+    @assert length(x) == ((n * (n + 1)) >> 1)
+    k = 0
+    for i = 1:n
+        @simd ivdep for j = 1:i-1
+            @inbounds A[i, j] = x[j+k]
+        end
+        k += i - 1
+        @simd ivdep for j = i:n
+            @inbounds A[i, j] = zero(T)
+        end
+    end
+    @simd ivdep for i = 1:n
+        @inbounds b[i] = x[i+k]
+    end
+    return nothing
+end
+
+
+function populate_explicit!(x::Vector{T}, A::Matrix{T}, b::Vector{T}) where {T}
+    n = length(b)
+    @assert size(A) == (n, n)
+    @assert length(x) == ((n * (n + 1)) >> 1)
+    k = 0
+    for i = 2:n
+        @simd ivdep for j = 1:i-1
+            @inbounds x[j+k] = A[i, j]
+        end
+        k += i - 1
+    end
+    @simd ivdep for i = 1:n
+        @inbounds x[i+k] = b[i]
+    end
+    return nothing
+end
+
+
+function populate_implicit!(A::Matrix{T}, b::Vector{T}, x::Vector{T}) where {T}
+    n = length(b)
+    @assert size(A) == (n, n)
+    @assert length(x) == n * (n + 1)
+    n2 = n * n
+    @simd ivdep for i = 1:n2
+        @inbounds A[i] = x[i]
+    end
+    @simd ivdep for i = 1:n
+        @inbounds b[i] = x[n2+i]
+    end
+    return nothing
+end
+
+
+function populate_implicit!(x::Vector{T}, A::Matrix{T}, b::Vector{T}) where {T}
+    n = length(b)
+    @assert size(A) == (n, n)
+    @assert length(x) == n * (n + 1)
+    n2 = n * n
+    @simd ivdep for i = 1:n2
+        @inbounds x[i] = A[i]
+    end
+    @simd ivdep for i = 1:n
+        @inbounds x[n2+i] = b[i]
+    end
+    return nothing
 end
 
 
@@ -544,40 +661,136 @@ using LinearAlgebra: mul!
 
 function populate_phi!(evaluator::RKOCEvaluator{T}) where {T}
     n = evaluator.num_stages
+    instructions = evaluator.instructions
     A = evaluator.A
     phi = evaluator.phi
-    @inbounds for (i, instruction) in enumerate(evaluator.instructions)
-        if instruction.left == -1
-            @assert instruction.right == -1
+    @inbounds for (k, instruction) in enumerate(instructions)
+        p = instruction.left
+        q = instruction.right
+        if p == -1
+            @assert q == -1
             @simd ivdep for j = 1:n
-                phi[j, i] = one(T)
+                phi[j, k] = one(T)
             end
-        elseif instruction.right == -1
-            k = instruction.left
-            mul!(view(phi, :, i), A, view(phi, :, k))
+        elseif q == -1
+            mul!(view(phi, :, k), A, view(phi, :, p))
         else
-            k = instruction.left
-            l = instruction.right
             @simd ivdep for j = 1:n
-                phi[j, i] = phi[j, k] * phi[j, l]
+                phi[j, k] = phi[j, p] * phi[j, q]
             end
         end
     end
+    return nothing
 end
 
 
 function populate_residuals!(evaluator::RKOCEvaluator{T}) where {T}
     n = evaluator.num_stages
-    @inbounds for (i, j) in enumerate(evaluator.indices)
+    output_indices = evaluator.output_indices
+    b = evaluator.b
+    phi = evaluator.phi
+    residuals = evaluator.residuals
+    inv_gamma = evaluator.inv_gamma
+    @inbounds for (i, k) in enumerate(output_indices)
         result = zero(T)
-        @simd for k = 1:n
-            result += b[k] * phi[k, j]
+        @simd for j = 1:n
+            result += b[j] * phi[j, k]
         end
         residuals[i] = result - inv_gamma[i]
     end
+    return nothing
 end
 
 
+function populate_dphi!(evaluator::RKOCEvaluator{T}) where {T}
+    n = evaluator.num_stages
+    output_set = evaluator.output_set
+    source_indices = evaluator.source_indices
+    child_indices = evaluator.child_indices
+    sibling_indices = evaluator.sibling_indices
+    sibling_ranges = evaluator.sibling_ranges
+    A = evaluator.A
+    b = evaluator.b
+    phi = evaluator.phi
+    dphi = evaluator.dphi
+    residuals = evaluator.residuals
+    @inbounds for (k, s) in Iterators.reverse(enumerate(source_indices))
+        if s == -1
+            @simd ivdep for j = 1:n
+                dphi[j, k] = zero(T)
+            end
+        else
+            r = residuals[s]
+            x = r + r
+            if k in output_set
+                @simd ivdep for j = 1:n
+                    dphi[j, k] = x * b[j]
+                end
+            end
+        end
+        c = child_indices[k]
+        if c != -1
+            for j = 1:n
+                temp = dphi[j, k]
+                @simd for i = 1:n
+                    temp += A[i, j] * dphi[i, c]
+                end
+                dphi[j, k] = temp
+            end
+        end
+        for i in sibling_ranges[k]
+            (p, q) = sibling_indices[i]
+            @simd ivdep for j = 1:n
+                dphi[j, k] += phi[j, p] * dphi[j, q]
+            end
+        end
+    end
+    return nothing
+end
+
+
+function populate_gradients!(evaluator::RKOCEvaluator{T}) where {T}
+    n = evaluator.num_stages
+    output_indices = evaluator.output_indices
+    child_indices = evaluator.child_indices
+    dA = evaluator.dA
+    db = evaluator.db
+    phi = evaluator.phi
+    dphi = evaluator.dphi
+    residuals = evaluator.residuals
+    for j = 1:n
+        @simd ivdep for i = 1:n
+            dA[i, j] = zero(T)
+        end
+    end
+    for (k, c) in enumerate(child_indices)
+        if c != -1
+            for t = 1:n
+                temp = phi[t, k]
+                @simd ivdep for s = 1:n
+                    dA[s, t] += temp * dphi[s, c]
+                end
+            end
+        end
+    end
+    @simd ivdep for i = 1:n
+        db[i] = zero(T)
+    end
+    for (i, k) in enumerate(output_indices)
+        temp = residuals[i]
+        @simd ivdep for j = 1:n
+            db[j] += temp * phi[j, k]
+        end
+    end
+    @simd ivdep for i = 1:n
+        db[i] += db[i]
+    end
+    return nothing
+end
+
+
+################################################################################
+################################################################################
 ################################################################################
 
 module Legacy
@@ -586,7 +799,6 @@ export RKOCEvaluator, evaluate_residual!, evaluate_jacobian!,
     evaluate_error_coefficients!, evaluate_error_jacobian!,
     constrain!, compute_order!, compute_stages,
     RKOCBackpropEvaluator, evaluate_residual2, evaluate_gradient!,
-    populate_explicit!, populate_implicit!,
     RKOCExplicitBackpropObjectiveFunctor,
     RKOCExplicitBackpropGradientFunctor,
     RKOCImplicitBackpropObjectiveFunctor,
@@ -1623,7 +1835,7 @@ function backprop_butcher_weights!(
         for k = k1:k2
             (s, t) = joined_siblings[k]
             @simd ivdep for j = 1:num_stages
-                u[j, i] += m[j, s] .* u[j, t]
+                u[j, i] += m[j, s] * u[j, t]
             end
         end
     end
