@@ -7,7 +7,7 @@ using .ButcherInstructions: LevelSequence, ButcherInstruction,
     build_instruction_table, compute_children_siblings
 
 
-################################################################################
+####################################################### EVALUATOR DATA STRUCTURE
 
 
 export RKOCEvaluator
@@ -65,27 +65,27 @@ RKOCEvaluator{T}(p::Int, s::Int) where {T} =
     RKOCEvaluator{T}(all_rooted_trees(p), s)
 
 
-################################################################################
+############################################ RESIDUAL COMPUTATION (FORWARD PASS)
 
 
 using LinearAlgebra: mul!
 
 
-function populate_phi!(ev::RKOCEvaluator{T}) where {T}
-    s = size(ev.phi, 1)
-    @assert (s, s) == size(ev.A)
+function compute_phi!(ev::RKOCEvaluator{T}) where {T}
+    n = size(ev.phi, 1)
+    @assert (n, n) == size(ev.A)
+    _one = one(T)
     @inbounds for (k, instruction) in enumerate(ev.instructions)
         p, q = instruction.left, instruction.right
         if p == -1
             @assert q == -1
-            _one = one(T)
-            @simd ivdep for j = 1:s
+            @simd ivdep for j = 1:n
                 ev.phi[j, k] = _one
             end
         elseif q == -1
             mul!(view(ev.phi, :, k), ev.A, view(ev.phi, :, p))
         else
-            @simd ivdep for j = 1:s
+            @simd ivdep for j = 1:n
                 ev.phi[j, k] = ev.phi[j, p] * ev.phi[j, q]
             end
         end
@@ -94,12 +94,13 @@ function populate_phi!(ev::RKOCEvaluator{T}) where {T}
 end
 
 
-function populate_residuals!(ev::RKOCEvaluator{T}) where {T}
-    s = size(ev.phi, 1)
-    @assert (s,) == size(ev.b)
+function compute_residuals!(ev::RKOCEvaluator{T}) where {T}
+    n = size(ev.phi, 1)
+    @assert (n,) == size(ev.b)
+    _zero = zero(T)
     @inbounds for (i, k) in enumerate(ev.output_indices)
-        result = zero(T)
-        @simd for j = 1:s
+        result = _zero
+        @simd for j = 1:n
             result += ev.b[j] * ev.phi[j, k]
         end
         ev.residuals[i] = result - ev.inv_gamma[i]
@@ -108,13 +109,205 @@ function populate_residuals!(ev::RKOCEvaluator{T}) where {T}
 end
 
 
+########################################### GRADIENT COMPUTATION (BACKWARD PASS)
+
+
+function compute_dphi!(ev::RKOCEvaluator{T}) where {T}
+    n = size(ev.phi, 1)
+    @assert n == size(ev.dphi, 1)
+    @assert (n, n) == size(ev.A)
+    @assert (n,) == size(ev.b)
+    _zero = zero(T)
+    @inbounds begin
+        for (k, s) in Iterators.reverse(enumerate(ev.source_indices))
+            if s == -1
+                @simd ivdep for j = 1:n
+                    ev.dphi[j, k] = _zero
+                end
+            else
+                residual = ev.residuals[s]
+                twice_residual = residual + residual
+                @simd ivdep for j = 1:n
+                    ev.dphi[j, k] = twice_residual * ev.b[j]
+                end
+            end
+            c = ev.child_indices[k]
+            if c != -1
+                for j = 1:n
+                    temp = ev.dphi[j, k]
+                    @simd for i = 1:n
+                        temp += ev.A[i, j] * ev.dphi[i, c]
+                    end
+                    ev.dphi[j, k] = temp
+                end
+            end
+            for i in ev.sibling_ranges[k]
+                (p, q) = ev.sibling_indices[i]
+                @simd ivdep for j = 1:n
+                    ev.dphi[j, k] += ev.phi[j, p] * ev.dphi[j, q]
+                end
+            end
+        end
+    end
+    return nothing
+end
+
+
+function compute_gradients!(ev::RKOCEvaluator{T}) where {T}
+    n = size(ev.phi, 1)
+    @assert n == size(ev.dphi, 1)
+    @assert (n, n) == size(ev.dA)
+    @assert (n,) == size(ev.db)
+    _zero = zero(T)
+    @inbounds begin
+        for j = 1:n
+            @simd ivdep for i = 1:n
+                ev.dA[i, j] = _zero
+            end
+        end
+        for (k, c) in enumerate(ev.child_indices)
+            if c != -1
+                for t = 1:n
+                    phi = ev.phi[t, k]
+                    @simd ivdep for s = 1:n
+                        ev.dA[s, t] += phi * ev.dphi[s, c]
+                    end
+                end
+            end
+        end
+        @simd ivdep for i = 1:n
+            ev.db[i] = zero(T)
+        end
+        for (i, k) in enumerate(ev.output_indices)
+            temp = ev.residuals[i]
+            @simd ivdep for j = 1:n
+                ev.db[j] += temp * ev.phi[j, k]
+            end
+        end
+        @simd ivdep for i = 1:n
+            ev.db[i] += ev.db[i]
+        end
+    end
+    return nothing
+end
+
+
+################################################### RESHAPING COEFFICIENT ARRAYS
+
+
+function reshape_explicit!(A::Matrix{T}, b::Vector{T}, x::Vector{T}) where {T}
+    n = length(b)
+    @assert (n, n) == size(A)
+    @assert ((n * (n + 1)) >> 1,) == size(x)
+    _zero = zero(T)
+    offset = 0
+    for i = 1:n
+        @simd ivdep for j = 1:i-1
+            @inbounds A[i, j] = x[offset+j]
+        end
+        offset += i - 1
+        @simd ivdep for j = i:n
+            @inbounds A[i, j] = _zero
+        end
+    end
+    @simd ivdep for i = 1:n
+        @inbounds b[i] = x[offset+i]
+    end
+    return nothing
+end
+
+
+function reshape_explicit!(x::Vector{T}, A::Matrix{T}, b::Vector{T}) where {T}
+    n = length(b)
+    @assert (n, n) == size(A)
+    @assert ((n * (n + 1)) >> 1,) == size(x)
+    offset = 0
+    for i = 2:n
+        @simd ivdep for j = 1:i-1
+            @inbounds x[offset+j] = A[i, j]
+        end
+        offset += i - 1
+    end
+    @simd ivdep for i = 1:n
+        @inbounds x[offset+i] = b[i]
+    end
+    return nothing
+end
+
+
+function reshape_implicit!(A::Matrix{T}, b::Vector{T}, x::Vector{T}) where {T}
+    n = length(b)
+    @assert (n, n) == size(A)
+    @assert (n * (n + 1),) == size(x)
+    n_squared = n * n
+    @simd ivdep for i = 1:n_squared
+        @inbounds A[i] = x[i]
+    end
+    @simd ivdep for i = 1:n
+        @inbounds b[i] = x[n_squared+i]
+    end
+    return nothing
+end
+
+
+function reshape_implicit!(x::Vector{T}, A::Matrix{T}, b::Vector{T}) where {T}
+    n = length(b)
+    @assert (n, n) == size(A)
+    @assert (n * (n + 1),) == size(x)
+    n_squared = n * n
+    @simd ivdep for i = 1:n_squared
+        @inbounds x[i] = A[i]
+    end
+    @simd ivdep for i = 1:n
+        @inbounds x[n_squared+i] = b[i]
+    end
+    return nothing
+end
+
+
+############################################################## FUNCTOR INTERFACE
+
+
+function (ev::RKOCEvaluator{T})(x::Vector{T}) where {T}
+    reshape_explicit!(ev.A, ev.b, x)
+    compute_phi!(ev)
+    compute_residuals!(ev)
+    result = zero(T)
+    @simd for i = 1:length(ev.residuals)
+        residual = @inbounds ev.residuals[i]
+        result += residual * residual
+    end
+    return result
+end
+
+
+struct RKOCEvaluatorAdjoint{T}
+    ev::RKOCEvaluator{T}
+end
+
+
+Base.adjoint(ev::RKOCEvaluator{T}) where {T} = RKOCEvaluatorAdjoint{T}(ev)
+
+
+function (adj::RKOCEvaluatorAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
+    reshape_explicit!(adj.ev.A, adj.ev.b, x)
+    compute_phi!(adj.ev)
+    compute_residuals!(adj.ev)
+    compute_dphi!(adj.ev)
+    compute_gradients!(adj.ev)
+    reshape_explicit!(g, adj.ev.dA, adj.ev.db)
+    return g
+end
+
+
+(adj::RKOCEvaluatorAdjoint{T})(x::Vector{T}) where {T} = adj(similar(x), x)
+
+
 #=
 
 using MultiFloats
 
-
 export RKOCEvaluator, RKOCEvaluatorMFV
-
 
 struct RKOCEvaluatorMFV{M,T,N}
     instructions::Vector{ButcherInstruction}
@@ -133,7 +326,6 @@ struct RKOCEvaluatorMFV{M,T,N}
     dphi::Vector{MultiFloatVec{M,T,N}}
     residuals::Vector{MultiFloat{T,N}}
 end
-
 
 function RKOCEvaluatorMFV{M,T,N}(trees::Vector{LevelSequence}) where {M,T,N}
     instructions, output_indices = build_butcher_instruction_table(trees)
@@ -168,13 +360,10 @@ function RKOCEvaluatorMFV{M,T,N}(trees::Vector{LevelSequence}) where {M,T,N}
     )
 end
 
-
 RKOCEvaluatorMFV{M,T,N}(order::Int) where {M,T,N} =
     RKOCEvaluatorMFV{M,T,N}(all_rooted_trees(order))
 
-
 ###################################### EVALUATING BUTCHER WEIGHTS (FORWARD PASS)
-
 
 function populate_phi!(evaluator::RKOCEvaluatorMFV{M,T,N}) where {M,T,N}
     instructions = evaluator.instructions
@@ -198,7 +387,6 @@ function populate_phi!(evaluator::RKOCEvaluatorMFV{M,T,N}) where {M,T,N}
     return nothing
 end
 
-
 function populate_residuals!(evaluator::RKOCEvaluatorMFV{M,T,N}) where {M,T,N}
     output_indices = evaluator.output_indices
     b = evaluator.b[]
@@ -212,55 +400,7 @@ function populate_residuals!(evaluator::RKOCEvaluatorMFV{M,T,N}) where {M,T,N}
     return nothing
 end
 
-
 ########################################### EVALUATING GRADIENTS (BACKWARD PASS)
-
-
-function populate_dphi!(evaluator::RKOCEvaluator{T}) where {T}
-    n = evaluator.num_stages
-    source_indices = evaluator.source_indices
-    child_indices = evaluator.child_indices
-    sibling_indices = evaluator.sibling_indices
-    sibling_ranges = evaluator.sibling_ranges
-    A = evaluator.A
-    b = evaluator.b
-    phi = evaluator.phi
-    dphi = evaluator.dphi
-    residuals = evaluator.residuals
-    @inbounds begin
-        for (k, s) in Iterators.reverse(enumerate(source_indices))
-            if s == -1
-                @simd ivdep for j = 1:n
-                    dphi[j, k] = zero(T)
-                end
-            else
-                residual = residuals[s]
-                temp = residual + residual
-                @simd ivdep for j = 1:n
-                    dphi[j, k] = temp * b[j]
-                end
-            end
-            c = child_indices[k]
-            if c != -1
-                for j = 1:n
-                    temp = dphi[j, k]
-                    @simd for i = 1:n
-                        temp += A[i, j] * dphi[i, c]
-                    end
-                    dphi[j, k] = temp
-                end
-            end
-            for i in sibling_ranges[k]
-                (p, q) = sibling_indices[i]
-                @simd ivdep for j = 1:n
-                    dphi[j, k] += phi[j, p] * dphi[j, q]
-                end
-            end
-        end
-        return nothing
-    end
-end
-
 
 function populate_dphi!(evaluator::RKOCEvaluatorMFV{M,T,N}) where {M,T,N}
     source_indices = evaluator.source_indices
@@ -299,47 +439,6 @@ function populate_dphi!(evaluator::RKOCEvaluatorMFV{M,T,N}) where {M,T,N}
     end
 end
 
-
-function populate_gradients!(evaluator::RKOCEvaluator{T}) where {T}
-    n = evaluator.num_stages
-    output_indices = evaluator.output_indices
-    child_indices = evaluator.child_indices
-    dA = evaluator.dA
-    db = evaluator.db
-    phi = evaluator.phi
-    dphi = evaluator.dphi
-    residuals = evaluator.residuals
-    for j = 1:n
-        @simd ivdep for i = 1:n
-            dA[i, j] = zero(T)
-        end
-    end
-    for (k, c) in enumerate(child_indices)
-        if c != -1
-            for t = 1:n
-                temp = phi[t, k]
-                @simd ivdep for s = 1:n
-                    dA[s, t] += temp * dphi[s, c]
-                end
-            end
-        end
-    end
-    @simd ivdep for i = 1:n
-        db[i] = zero(T)
-    end
-    for (i, k) in enumerate(output_indices)
-        temp = residuals[i]
-        @simd ivdep for j = 1:n
-            db[j] += temp * phi[j, k]
-        end
-    end
-    @simd ivdep for i = 1:n
-        db[i] += db[i]
-    end
-    return nothing
-end
-
-
 function populate_gradients!(evaluator::RKOCEvaluatorMFV{M,T,N}) where {M,T,N}
     output_indices = evaluator.output_indices
     child_indices = evaluator.child_indices
@@ -366,97 +465,7 @@ function populate_gradients!(evaluator::RKOCEvaluatorMFV{M,T,N}) where {M,T,N}
     return nothing
 end
 
-
-################################################### RESHAPING COEFFICIENT ARRAYS
-
-
-function populate_explicit!(A::Matrix{T}, b::Vector{T}, x::Vector{T}) where {T}
-    n = length(b)
-    @assert size(A) == (n, n)
-    @assert length(x) == ((n * (n + 1)) >> 1)
-    k = 0
-    for i = 1:n
-        @simd ivdep for j = 1:i-1
-            @inbounds A[i, j] = x[j+k]
-        end
-        k += i - 1
-        @simd ivdep for j = i:n
-            @inbounds A[i, j] = zero(T)
-        end
-    end
-    @simd ivdep for i = 1:n
-        @inbounds b[i] = x[i+k]
-    end
-    return nothing
-end
-
-
-function populate_explicit!(x::Vector{T}, A::Matrix{T}, b::Vector{T}) where {T}
-    n = length(b)
-    @assert size(A) == (n, n)
-    @assert length(x) == ((n * (n + 1)) >> 1)
-    k = 0
-    for i = 2:n
-        @simd ivdep for j = 1:i-1
-            @inbounds x[j+k] = A[i, j]
-        end
-        k += i - 1
-    end
-    @simd ivdep for i = 1:n
-        @inbounds x[i+k] = b[i]
-    end
-    return nothing
-end
-
-
-function populate_implicit!(A::Matrix{T}, b::Vector{T}, x::Vector{T}) where {T}
-    n = length(b)
-    @assert size(A) == (n, n)
-    @assert length(x) == n * (n + 1)
-    n2 = n * n
-    @simd ivdep for i = 1:n2
-        @inbounds A[i] = x[i]
-    end
-    @simd ivdep for i = 1:n
-        @inbounds b[i] = x[n2+i]
-    end
-    return nothing
-end
-
-
-function populate_implicit!(x::Vector{T}, A::Matrix{T}, b::Vector{T}) where {T}
-    n = length(b)
-    @assert size(A) == (n, n)
-    @assert length(x) == n * (n + 1)
-    n2 = n * n
-    @simd ivdep for i = 1:n2
-        @inbounds x[i] = A[i]
-    end
-    @simd ivdep for i = 1:n
-        @inbounds x[n2+i] = b[i]
-    end
-    return nothing
-end
-
-
 ################################################################################
-
-
-function (evaluator::RKOCEvaluator{T})(x::Vector{T}) where {T}
-    A = evaluator.A
-    b = evaluator.b
-    residuals = evaluator.residuals
-    populate_explicit!(A, b, x)
-    populate_phi!(evaluator)
-    populate_residuals!(evaluator)
-    result = zero(T)
-    @simd for i = 1:length(residuals)
-        temp = @inbounds residuals[i]
-        result += temp * temp
-    end
-    return result
-end
-
 
 function (evaluator::RKOCEvaluatorMFV{M,T,N})(
     x::Vector{MultiFloat{T,N}}
@@ -490,40 +499,12 @@ function (evaluator::RKOCEvaluatorMFV{M,T,N})(
     return result
 end
 
-
-struct RKOCEvaluatorAdjoint{T}
-    evaluator::RKOCEvaluator{T}
-end
-
-
 struct RKOCEvaluatorMFVAdjoint{M,T,N}
     evaluator::RKOCEvaluatorMFV{M,T,N}
 end
 
-
-Base.adjoint(evaluator::RKOCEvaluator{T}) where {T} =
-    RKOCEvaluatorAdjoint{T}(evaluator)
-
-
 Base.adjoint(evaluator::RKOCEvaluatorMFV{M,T,N}) where {M,T,N} =
     RKOCEvaluatorMFVAdjoint{M,T,N}(evaluator)
-
-
-function (adjoint::RKOCEvaluatorAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
-    evaluator = adjoint.evaluator
-    A = evaluator.A
-    dA = evaluator.dA
-    b = evaluator.b
-    db = evaluator.db
-    populate_explicit!(A, b, x)
-    populate_phi!(evaluator)
-    populate_residuals!(evaluator)
-    populate_dphi!(evaluator)
-    populate_gradients!(evaluator)
-    populate_explicit!(g, dA, db)
-    return g
-end
-
 
 function (adjoint::RKOCEvaluatorMFVAdjoint{M,T,N})(
     g::Vector{MultiFloat{T,N}},
@@ -566,12 +547,6 @@ function (adjoint::RKOCEvaluatorMFVAdjoint{M,T,N})(
     end
     return g
 end
-
-
-function (adjoint::RKOCEvaluatorAdjoint{T})(x::Vector{T}) where {T}
-    return adjoint(similar(x), x)
-end
-
 
 function (adjoint::RKOCEvaluatorMFVAdjoint{M,T,N})(
     x::Vector{MultiFloat{T,N}}
