@@ -137,9 +137,12 @@ end
 LevelSequenceDict() = LevelSequenceDict(Dict{Vector{Int},Int}())
 
 
-Base.haskey(d::LevelSequenceDict, s::LevelSequence) = haskey(d.entries, s.data)
-Base.getindex(d::LevelSequenceDict, s::LevelSequence) = getindex(d.entries, s.data)
-Base.setindex!(d::LevelSequenceDict, i::Int, s::LevelSequence) = setindex!(d.entries, i, s.data)
+Base.haskey(d::LevelSequenceDict, s::LevelSequence) =
+    haskey(d.entries, s.data)
+Base.getindex(d::LevelSequenceDict, s::LevelSequence) =
+    getindex(d.entries, s.data)
+Base.setindex!(d::LevelSequenceDict, i::Int, s::LevelSequence) =
+    setindex!(d.entries, i, s.data)
 
 
 ##################################################### GENERATING LEVEL SEQUENCES
@@ -242,7 +245,8 @@ function Base.iterate(
 end
 
 
-all_rooted_trees(n::Int) = reduce(vcat, (collect(LevelSequenceIterator(i)) for i = 1:n))
+all_rooted_trees(n::Int) = reduce(vcat,
+    (collect(LevelSequenceIterator(i)) for i = 1:n))
 
 
 ################################################## COMBINATORICS OF ROOTED TREES
@@ -300,24 +304,30 @@ function find_butcher_instruction(
         if haskey(indices, leg)
             index = indices[leg]
             instruction = instructions[index]
-            return ButcherInstruction(index, -1, instruction.depth + 1, instruction.deficit + 1)
+            return ButcherInstruction(
+                index, -1, instruction.depth + 1, instruction.deficit + 1)
         else
             return nothing
         end
     else
         candidates = ButcherInstruction[]
         for p in BipartitionIterator(legs)
-            left_leg = LevelSequence(reduce(vcat, (leg.data .+ 1 for leg in p.left); init=[1]))
+            left_leg = LevelSequence(reduce(vcat,
+                (leg.data .+ 1 for leg in p.left); init=[1]))
             if haskey(indices, left_leg)
-                right_leg = LevelSequence(reduce(vcat, (leg.data .+ 1 for leg in p.right); init=[1]))
+                right_leg = LevelSequence(reduce(vcat,
+                    (leg.data .+ 1 for leg in p.right); init=[1]))
                 if haskey(indices, right_leg)
                     left_index = indices[left_leg]
                     right_index = indices[right_leg]
                     left_instruction = instructions[left_index]
                     right_instruction = instructions[right_index]
-                    depth = 1 + max(left_instruction.depth, right_instruction.depth)
-                    deficit = max(left_instruction.deficit, right_instruction.deficit)
-                    push!(candidates, ButcherInstruction(left_index, right_index, depth, deficit))
+                    depth = 1 + max(
+                        left_instruction.depth, right_instruction.depth)
+                    deficit = max(
+                        left_instruction.deficit, right_instruction.deficit)
+                    push!(candidates, ButcherInstruction(
+                        left_index, right_index, depth, deficit))
                 end
             end
         end
@@ -347,7 +357,8 @@ function push_butcher_instructions!(
             # and we also want to minimize depth for parallelism. For now, we
             # always put one leg on the left and remaining legs on the right.
             left_leg = LevelSequence(vcat([1], legs[1].data .+ 1))
-            right_leg = LevelSequence(reduce(vcat, (leg.data .+ 1 for leg in legs[2:end]); init=[1]))
+            right_leg = LevelSequence(reduce(vcat,
+                (leg.data .+ 1 for leg in legs[2:end]); init=[1]))
             if !haskey(indices, left_leg)
                 push_butcher_instructions!(instructions, indices, left_leg)
             end
@@ -372,14 +383,17 @@ permute_butcher_instruction(
     instruction.depth, instruction.deficit)
 
 
-function push_necessary_subtrees!(result::LevelSequenceDict, tree::LevelSequence)
+function push_necessary_subtrees!(
+    result::LevelSequenceDict, tree::LevelSequence
+)
     result[tree] = 0
     legs = extract_legs(tree)
     if isone(length(legs))
         push_necessary_subtrees!(result, only(legs))
     else
         for leg in legs
-            push_necessary_subtrees!(result, LevelSequence(vcat([1], leg.data .+ 1)))
+            push_necessary_subtrees!(result,
+                LevelSequence(vcat([1], leg.data .+ 1)))
         end
     end
     return result
@@ -409,7 +423,7 @@ function necessary_subtrees(trees::Vector{LevelSequence})
 end
 
 
-function build_butcher_instruction_table(
+function build_instruction_table(
     trees::Vector{LevelSequence};
     optimize::Bool=true, sort_by_depth::Bool=true
 )
@@ -466,6 +480,7 @@ function execute_instruction_table(instructions::Vector{ButcherInstruction})
             push!(result, LevelSequence(reduce(vcat, children; init=[1])))
         end
     end
+    @assert all(is_canonical, result)
     return result
 end
 
