@@ -79,7 +79,7 @@ function count_legs(s::LevelSequence)
     @inbounds begin
         @assert isone(s[1])
         result = 0
-        @simd for i = 2:n
+        for i = 2:n
             result += (s[i] == 2)
         end
         return result

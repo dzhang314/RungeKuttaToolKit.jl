@@ -100,7 +100,7 @@ function compute_residuals!(ev::RKOCEvaluator{T}) where {T}
     _zero = zero(T)
     @inbounds for (i, k) in enumerate(ev.output_indices)
         result = _zero
-        @simd for j = 1:n
+        for j = 1:n
             result += ev.b[j] * ev.phi[j, k]
         end
         ev.residuals[i] = result - ev.inv_gamma[i]
@@ -135,7 +135,7 @@ function compute_dphi!(ev::RKOCEvaluator{T}) where {T}
             if c != -1
                 for j = 1:n
                     temp = ev.dphi[j, k]
-                    @simd for i = 1:n
+                    for i = 1:n
                         temp += ev.A[i, j] * ev.dphi[i, c]
                     end
                     ev.dphi[j, k] = temp
@@ -176,7 +176,7 @@ function compute_gradients!(ev::RKOCEvaluator{T}) where {T}
             end
         end
         @simd ivdep for i = 1:n
-            ev.db[i] = zero(T)
+            ev.db[i] = _zero
         end
         for (i, k) in enumerate(ev.output_indices)
             temp = ev.residuals[i]
@@ -273,7 +273,7 @@ function (ev::RKOCEvaluator{T})(x::Vector{T}) where {T}
     compute_phi!(ev)
     compute_residuals!(ev)
     result = zero(T)
-    @simd for i = 1:length(ev.residuals)
+    for i = 1:length(ev.residuals)
         residual = @inbounds ev.residuals[i]
         result += residual * residual
     end
@@ -492,7 +492,7 @@ function (evaluator::RKOCEvaluatorMFV{M,T,N})(
     populate_phi!(evaluator)
     populate_residuals!(evaluator)
     result = zero(MultiFloat{T,N})
-    @simd for i = 1:length(residuals)
+    for i = 1:length(residuals)
         temp = @inbounds residuals[i]
         result += temp * temp
     end
