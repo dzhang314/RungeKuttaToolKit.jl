@@ -68,12 +68,10 @@ RKOCEvaluator{T}(p::Int, s::Int) where {T} =
 ############################################ RESIDUAL COMPUTATION (FORWARD PASS)
 
 
-using LinearAlgebra: mul!
-
-
 function compute_phi!(ev::RKOCEvaluator{T}) where {T}
     n = size(ev.phi, 1)
     @assert (n, n) == size(ev.A)
+    _zero = zero(T)
     _one = one(T)
     @inbounds for (k, instruction) in enumerate(ev.instructions)
         p, q = instruction.left, instruction.right
@@ -83,7 +81,15 @@ function compute_phi!(ev::RKOCEvaluator{T}) where {T}
                 ev.phi[j, k] = _one
             end
         elseif q == -1
-            mul!(view(ev.phi, :, k), ev.A, view(ev.phi, :, p))
+            @simd ivdep for j = 1:n
+                ev.phi[j, k] = _zero
+            end
+            for i = 1:n
+                phi = ev.phi[i, p]
+                @simd ivdep for j = 1:n
+                    ev.phi[j, k] += phi * ev.A[j, i]
+                end
+            end
         else
             @simd ivdep for j = 1:n
                 ev.phi[j, k] = ev.phi[j, p] * ev.phi[j, q]
