@@ -68,35 +68,39 @@ RKOCEvaluator{T}(p::Int, s::Int) where {T} =
 ############################################ RESIDUAL COMPUTATION (FORWARD PASS)
 
 
-function compute_phi!(ev::RKOCEvaluator{T}) where {T}
-    n = size(ev.phi, 1)
-    @assert (n, n) == size(ev.A)
+function compute_phi!(
+    phi::AbstractMatrix{T}, A::AbstractMatrix{T},
+    instructions::Vector{ButcherInstruction}
+) where {T}
+    n = size(phi, 1)
+    @assert (n, n) == size(A)
+    @assert size(phi, 2) == length(instructions)
     _zero = zero(T)
     _one = one(T)
-    @inbounds for (k, instruction) in enumerate(ev.instructions)
+    @inbounds for (k, instruction) in enumerate(instructions)
         p, q = instruction.left, instruction.right
         if p == -1
             @assert q == -1
             @simd ivdep for j = 1:n
-                ev.phi[j, k] = _one
+                phi[j, k] = _one
             end
         elseif q == -1
             @simd ivdep for j = 1:n
-                ev.phi[j, k] = _zero
+                phi[j, k] = _zero
             end
             for i = 1:n
-                phi = ev.phi[i, p]
+                temp = phi[i, p]
                 @simd ivdep for j = 1:n
-                    ev.phi[j, k] += phi * ev.A[j, i]
+                    phi[j, k] += temp * A[j, i]
                 end
             end
         else
             @simd ivdep for j = 1:n
-                ev.phi[j, k] = ev.phi[j, p] * ev.phi[j, q]
+                phi[j, k] = phi[j, p] * phi[j, q]
             end
         end
     end
-    return nothing
+    return phi
 end
 
 
@@ -118,7 +122,7 @@ end
 ########################################### GRADIENT COMPUTATION (BACKWARD PASS)
 
 
-function compute_dphi!(ev::RKOCEvaluator{T}) where {T}
+function compute_dphi_backward!(ev::RKOCEvaluator{T}) where {T}
     n = size(ev.phi, 1)
     @assert n == size(ev.dphi, 1)
     @assert (n, n) == size(ev.A)
@@ -276,7 +280,7 @@ end
 
 function (ev::RKOCEvaluator{T})(x::Vector{T}) where {T}
     reshape_explicit!(ev.A, ev.b, x)
-    compute_phi!(ev)
+    compute_phi!(ev.phi, ev.A, ev.instructions)
     compute_residuals!(ev)
     result = zero(T)
     for i = 1:length(ev.residuals)
@@ -297,9 +301,9 @@ Base.adjoint(ev::RKOCEvaluator{T}) where {T} = RKOCEvaluatorAdjoint{T}(ev)
 
 function (adj::RKOCEvaluatorAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
     reshape_explicit!(adj.ev.A, adj.ev.b, x)
-    compute_phi!(adj.ev)
+    compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.instructions)
     compute_residuals!(adj.ev)
-    compute_dphi!(adj.ev)
+    compute_dphi_backward!(adj.ev)
     compute_gradients!(adj.ev)
     reshape_explicit!(g, adj.ev.dA, adj.ev.db)
     return g
