@@ -205,6 +205,40 @@ end
 ################################################### RESHAPING COEFFICIENT ARRAYS
 
 
+function reshape_explicit!(A::Matrix{T}, x::Vector{T}) where {T}
+    n = size(A, 1)
+    @assert n == size(A, 2)
+    @assert ((n * (n - 1)) >> 1,) == size(x)
+    _zero = zero(T)
+    offset = 0
+    for i = 1:n
+        @simd ivdep for j = 1:i-1
+            @inbounds A[i, j] = x[offset+j]
+        end
+        offset += i - 1
+        @simd ivdep for j = i:n
+            @inbounds A[i, j] = _zero
+        end
+    end
+    return nothing
+end
+
+
+function reshape_explicit!(x::Vector{T}, A::Matrix{T}) where {T}
+    n = size(A, 1)
+    @assert n == size(A, 2)
+    @assert ((n * (n - 1)) >> 1,) == size(x)
+    offset = 0
+    for i = 2:n
+        @simd ivdep for j = 1:i-1
+            @inbounds x[offset+j] = A[i, j]
+        end
+        offset += i - 1
+    end
+    return nothing
+end
+
+
 function reshape_explicit!(A::Matrix{T}, b::Vector{T}, x::Vector{T}) where {T}
     n = length(b)
     @assert (n, n) == size(A)
