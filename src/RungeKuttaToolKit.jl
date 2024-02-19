@@ -122,7 +122,7 @@ function compute_residuals!(
         end
         residuals[i] = result - inv_gamma[i]
     end
-    return nothing
+    return residuals
 end
 
 
@@ -260,7 +260,7 @@ function reshape_explicit!(A::Matrix{T}, x::Vector{T}) where {T}
             @inbounds A[i, j] = _zero
         end
     end
-    return nothing
+    return A
 end
 
 
@@ -275,7 +275,7 @@ function reshape_explicit!(x::Vector{T}, A::Matrix{T}) where {T}
         end
         offset += i - 1
     end
-    return nothing
+    return x
 end
 
 
@@ -297,7 +297,7 @@ function reshape_explicit!(A::Matrix{T}, b::Vector{T}, x::Vector{T}) where {T}
     @simd ivdep for i = 1:n
         @inbounds b[i] = x[offset+i]
     end
-    return nothing
+    return (A, b)
 end
 
 
@@ -315,7 +315,7 @@ function reshape_explicit!(x::Vector{T}, A::Matrix{T}, b::Vector{T}) where {T}
     @simd ivdep for i = 1:n
         @inbounds x[offset+i] = b[i]
     end
-    return nothing
+    return x
 end
 
 
@@ -330,7 +330,7 @@ function reshape_implicit!(A::Matrix{T}, b::Vector{T}, x::Vector{T}) where {T}
     @simd ivdep for i = 1:n
         @inbounds b[i] = x[n_squared+i]
     end
-    return nothing
+    return (A, b)
 end
 
 
@@ -345,7 +345,7 @@ function reshape_implicit!(x::Vector{T}, A::Matrix{T}, b::Vector{T}) where {T}
     @simd ivdep for i = 1:n
         @inbounds x[n_squared+i] = b[i]
     end
-    return nothing
+    return x
 end
 
 
