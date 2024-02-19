@@ -3,8 +3,5 @@ uuid = "5ccfa5ee-da33-4844-afab-33f13f6d8736"
 authors = ["David K. Zhang <dzhang314@gmail.com>"]
 version = "0.1.0"
 
-[deps]
-MultiFloats = "bdf0d083-296b-4888-a5b6-7498122e68a5"
-
 [compat]
 julia = "1.0"
