@@ -104,16 +104,23 @@ function compute_phi!(
 end
 
 
-function compute_residuals!(ev::RKOCEvaluator{T}) where {T}
-    n = size(ev.phi, 1)
-    @assert (n,) == size(ev.b)
+function compute_residuals!(
+    residuals::AbstractVector{T}, b::AbstractVector{T},
+    phi::AbstractMatrix{T}, inv_gamma::AbstractVector{T},
+    output_indices::AbstractVector{Int}
+) where {T}
+    m = length(residuals)
+    n = length(b)
+    @assert n == size(phi, 1)
+    @assert (m,) == size(inv_gamma)
+    @assert (m,) == size(output_indices)
     _zero = zero(T)
-    @inbounds for (i, k) in enumerate(ev.output_indices)
+    @inbounds for (i, k) in enumerate(output_indices)
         result = _zero
         for j = 1:n
-            result += ev.b[j] * ev.phi[j, k]
+            result += b[j] * phi[j, k]
         end
-        ev.residuals[i] = result - ev.inv_gamma[i]
+        residuals[i] = result - inv_gamma[i]
     end
     return nothing
 end
@@ -122,83 +129,116 @@ end
 ########################################### GRADIENT COMPUTATION (BACKWARD PASS)
 
 
-function compute_dphi_backward!(ev::RKOCEvaluator{T}) where {T}
-    n = size(ev.phi, 1)
-    @assert n == size(ev.dphi, 1)
-    @assert (n, n) == size(ev.A)
-    @assert (n,) == size(ev.b)
+function initialize_dphi_from_residual!(
+    dphi::AbstractMatrix{T}, b::AbstractVector{T},
+    residuals::AbstractVector{T}, source_indices::AbstractVector{Int}
+) where {T}
+    n, m = size(dphi)
+    @assert (n,) == size(b)
+    @assert (m,) == size(source_indices)
     _zero = zero(T)
-    @inbounds begin
-        for (k, s) in Iterators.reverse(enumerate(ev.source_indices))
-            if s == -1
-                @simd ivdep for j = 1:n
-                    ev.dphi[j, k] = _zero
-                end
-            else
-                residual = ev.residuals[s]
-                twice_residual = residual + residual
-                @simd ivdep for j = 1:n
-                    ev.dphi[j, k] = twice_residual * ev.b[j]
-                end
+    @inbounds for (k, s) in Iterators.reverse(enumerate(source_indices))
+        if s == -1
+            @simd ivdep for j = 1:n
+                dphi[j, k] = _zero
             end
-            c = ev.child_indices[k]
-            if c != -1
-                for j = 1:n
-                    temp = ev.dphi[j, k]
-                    for i = 1:n
-                        temp += ev.A[i, j] * ev.dphi[i, c]
-                    end
-                    ev.dphi[j, k] = temp
-                end
-            end
-            for i in ev.sibling_ranges[k]
-                (p, q) = ev.sibling_indices[i]
-                @simd ivdep for j = 1:n
-                    ev.dphi[j, k] += ev.phi[j, p] * ev.dphi[j, q]
-                end
+        else
+            residual = residuals[s]
+            twice_residual = residual + residual
+            @simd ivdep for j = 1:n
+                dphi[j, k] = twice_residual * b[j]
             end
         end
     end
-    return nothing
+    return dphi
 end
 
 
-function compute_gradients!(ev::RKOCEvaluator{T}) where {T}
-    n = size(ev.phi, 1)
-    @assert n == size(ev.dphi, 1)
-    @assert (n, n) == size(ev.dA)
-    @assert (n,) == size(ev.db)
-    _zero = zero(T)
-    @inbounds begin
-        for j = 1:n
-            @simd ivdep for i = 1:n
-                ev.dA[i, j] = _zero
+function compute_dphi_backward!(
+    dphi::AbstractMatrix{T}, A::AbstractMatrix{T}, phi::AbstractMatrix{T},
+    child_indices::AbstractVector{Int},
+    sibling_ranges::AbstractVector{UnitRange{Int}},
+    sibling_indices::AbstractVector{Pair{Int,Int}}
+) where {T}
+    n, m = size(dphi)
+    @assert (n, m) == size(phi)
+    @assert (n, n) == size(A)
+    @assert (m,) == size(child_indices)
+    @assert (m,) == size(sibling_ranges)
+    @inbounds for k = m:-1:1
+        c = child_indices[k]
+        if c != -1
+            for j = 1:n
+                temp = dphi[j, k]
+                for i = 1:n
+                    temp += A[i, j] * dphi[i, c]
+                end
+                dphi[j, k] = temp
             end
         end
-        for (k, c) in enumerate(ev.child_indices)
-            if c != -1
-                for t = 1:n
-                    phi = ev.phi[t, k]
-                    @simd ivdep for s = 1:n
-                        ev.dA[s, t] += phi * ev.dphi[s, c]
-                    end
+        for i in sibling_ranges[k]
+            (p, q) = sibling_indices[i]
+            @simd ivdep for j = 1:n
+                dphi[j, k] += phi[j, p] * dphi[j, q]
+            end
+        end
+    end
+    return dphi
+end
+
+
+function compute_dA_backward!(
+    dA::AbstractMatrix{T}, phi::AbstractMatrix{T}, dphi::AbstractMatrix{T},
+    child_indices::AbstractVector{Int}
+) where {T}
+    n, m = size(phi)
+    @assert (n, m) == size(dphi)
+    @assert (n, n) == size(dA)
+    @assert (m,) == size(child_indices)
+    _zero = zero(T)
+    @inbounds for j = 1:n
+        @simd ivdep for i = 1:n
+            dA[i, j] = _zero
+        end
+    end
+    @inbounds for (k, c) in enumerate(child_indices)
+        if c != -1
+            for t = 1:n
+                f = phi[t, k]
+                @simd ivdep for s = 1:n
+                    dA[s, t] += f * dphi[s, c]
                 end
             end
         end
+    end
+    return dA
+end
+
+
+function compute_db_backward!(
+    db::AbstractVector{T}, phi::AbstractMatrix{T},
+    residuals::AbstractVector{T}, output_indices::AbstractVector{Int}
+) where {T}
+    n = length(db)
+    m = length(residuals)
+    @assert n == size(phi, 1)
+    @assert m == length(output_indices)
+    _zero = zero(T)
+    @inbounds begin
         @simd ivdep for i = 1:n
-            ev.db[i] = _zero
+            db[i] = _zero
         end
-        for (i, k) in enumerate(ev.output_indices)
-            temp = ev.residuals[i]
+        for (i, k) in enumerate(output_indices)
+            r = residuals[i]
             @simd ivdep for j = 1:n
-                ev.db[j] += temp * ev.phi[j, k]
+                db[j] += r * phi[j, k]
             end
         end
         @simd ivdep for i = 1:n
-            ev.db[i] += ev.db[i]
+            db[i] += db[i]
         end
     end
-    return nothing
+    return db
 end
 
 
@@ -315,7 +355,8 @@ end
 function (ev::RKOCEvaluator{T})(x::Vector{T}) where {T}
     reshape_explicit!(ev.A, ev.b, x)
     compute_phi!(ev.phi, ev.A, ev.instructions)
-    compute_residuals!(ev)
+    compute_residuals!(ev.residuals,
+        ev.b, ev.phi, ev.inv_gamma, ev.output_indices)
     result = zero(T)
     for i = 1:length(ev.residuals)
         residual = @inbounds ev.residuals[i]
@@ -336,9 +377,16 @@ Base.adjoint(ev::RKOCEvaluator{T}) where {T} = RKOCEvaluatorAdjoint{T}(ev)
 function (adj::RKOCEvaluatorAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
     reshape_explicit!(adj.ev.A, adj.ev.b, x)
     compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.instructions)
-    compute_residuals!(adj.ev)
-    compute_dphi_backward!(adj.ev)
-    compute_gradients!(adj.ev)
+    compute_residuals!(adj.ev.residuals,
+        adj.ev.b, adj.ev.phi, adj.ev.inv_gamma, adj.ev.output_indices)
+    initialize_dphi_from_residual!(adj.ev.dphi,
+        adj.ev.b, adj.ev.residuals, adj.ev.source_indices)
+    compute_dphi_backward!(adj.ev.dphi, adj.ev.A, adj.ev.phi,
+        adj.ev.child_indices, adj.ev.sibling_ranges, adj.ev.sibling_indices)
+    compute_dA_backward!(adj.ev.dA,
+        adj.ev.phi, adj.ev.dphi, adj.ev.child_indices)
+    compute_db_backward!(adj.ev.db,
+        adj.ev.phi, adj.ev.residuals, adj.ev.output_indices)
     reshape_explicit!(g, adj.ev.dA, adj.ev.db)
     return g
 end
