@@ -5,27 +5,47 @@ using MultiFloats: MultiFloat, rsqrt
 
 
 include("ButcherInstructions.jl")
-using .ButcherInstructions: LevelSequence, ButcherInstruction,
-    all_rooted_trees, butcher_density, butcher_symmetry,
-    build_instruction_table, compute_children_siblings
+using .ButcherInstructions: LevelSequence,
+    ButcherInstruction, ButcherInstructionTable,
+    all_rooted_trees, butcher_density, butcher_symmetry
 
 
-####################################################### EVALUATOR DATA STRUCTURE
+###################################################### EVALUATOR DATA STRUCTURES
 
 
-export RKOCEvaluator
+export RKOCEvaluatorAE, RKOCEvaluatorAI, RKOCEvaluatorBE, RKOCEvaluatorBI
 
 
-struct RKOCEvaluator{T}
+struct RKOCEvaluatorAE{T}
+    table::ButcherInstructionTable
+    A::Matrix{T}
+    dA::Matrix{T}
+    phi::Matrix{T}
+    dphi::Matrix{T}
+    Q::Matrix{T}
+    R::Matrix{T}
+    b::Vector{T}
+    inv_gamma::Vector{T}
+    residuals::Vector{T}
+end
 
-    instructions::Vector{ButcherInstruction}
-    output_indices::Vector{Int}
-    source_indices::Vector{Int}
 
-    child_indices::Vector{Int}
-    sibling_indices::Vector{Pair{Int,Int}}
-    sibling_ranges::Vector{UnitRange{Int}}
+struct RKOCEvaluatorAI{T}
+    table::ButcherInstructionTable
+    A::Matrix{T}
+    dA::Matrix{T}
+    phi::Matrix{T}
+    dphi::Matrix{T}
+    Q::Matrix{T}
+    R::Matrix{T}
+    b::Vector{T}
+    inv_gamma::Vector{T}
+    residuals::Vector{T}
+end
 
+
+struct RKOCEvaluatorBE{T}
+    table::ButcherInstructionTable
     A::Matrix{T}
     dA::Matrix{T}
     b::Vector{T}
@@ -34,105 +54,83 @@ struct RKOCEvaluator{T}
     dphi::Matrix{T}
     inv_gamma::Vector{T}
     residuals::Vector{T}
-
 end
 
 
-function RKOCEvaluator{T}(trees::Vector{LevelSequence}, s::Int) where {T}
+struct RKOCEvaluatorBI{T}
+    table::ButcherInstructionTable
+    A::Matrix{T}
+    dA::Matrix{T}
+    b::Vector{T}
+    db::Vector{T}
+    phi::Matrix{T}
+    dphi::Matrix{T}
+    inv_gamma::Vector{T}
+    residuals::Vector{T}
+end
 
-    instructions, output_indices = build_instruction_table(trees)
-    source_indices = [-1 for _ in instructions]
-    for (i, j) in enumerate(output_indices)
-        source_indices[j] = i
-    end
 
-    child_indices, sibling_lists = compute_children_siblings(instructions)
-    sibling_indices = reduce(vcat, sibling_lists)
-    end_indices = cumsum(length.(sibling_lists))
-    start_indices = vcat([1], end_indices[1:end-1] .+ 1)
-    sibling_ranges = UnitRange{Int}.(start_indices, end_indices)
-
-    return RKOCEvaluator{T}(
-        instructions, output_indices, source_indices,
-        child_indices, sibling_indices, sibling_ranges,
+function RKOCEvaluatorAE{T}(trees::Vector{LevelSequence}, s::Int) where {T}
+    table = ButcherInstructionTable(trees)
+    return RKOCEvaluatorAE{T}(table,
         Matrix{T}(undef, s, s), Matrix{T}(undef, s, s),
-        Vector{T}(undef, s), Vector{T}(undef, s),
-        Matrix{T}(undef, s, length(instructions)),
-        Matrix{T}(undef, s, length(instructions)),
+        Matrix{T}(undef, s, length(table.instructions)),
+        Matrix{T}(undef, s, length(table.instructions)),
+        Matrix{T}(undef, length(trees), s),
+        Matrix{T}(undef, s, s), Vector{T}(undef, s),
         [inv(T(butcher_density(tree))) for tree in trees],
         Vector{T}(undef, length(trees)))
 end
 
 
-@inline RKOCEvaluator{T}(p::Int, s::Int) where {T} =
-    RKOCEvaluator{T}(all_rooted_trees(p), s)
-
-
-############################################ PROJECTION EVALUATOR DATA STRUCTURE
-
-
-export RKOCProjectionEvaluator
-
-
-struct RKOCProjectionEvaluator{T}
-
-    instructions::Vector{ButcherInstruction}
-    output_indices::Vector{Int}
-    source_indices::Vector{Int}
-
-    child_indices::Vector{Int}
-    sibling_indices::Vector{Pair{Int,Int}}
-    sibling_ranges::Vector{UnitRange{Int}}
-
-    A::Matrix{T}
-    dA::Matrix{T}
-    b::Vector{T}
-    phi::Matrix{T}
-    dphi::Matrix{T}
-    inv_gamma::Vector{T}
-    residuals::Vector{T}
-
-    Q::Matrix{T}
-    R::Matrix{T}
-
-end
-
-
-function RKOCProjectionEvaluator{T}(
-    trees::Vector{LevelSequence}, s::Int
-) where {T}
-
-    instructions, output_indices = build_instruction_table(trees)
-    source_indices = [-1 for _ in instructions]
-    for (i, j) in enumerate(output_indices)
-        source_indices[j] = i
-    end
-
-    child_indices, sibling_lists = compute_children_siblings(instructions)
-    sibling_indices = reduce(vcat, sibling_lists)
-    end_indices = cumsum(length.(sibling_lists))
-    start_indices = vcat([1], end_indices[1:end-1] .+ 1)
-    sibling_ranges = UnitRange{Int}.(start_indices, end_indices)
-
-    return RKOCProjectionEvaluator{T}(
-        instructions, output_indices, source_indices,
-        child_indices, sibling_indices, sibling_ranges,
+function RKOCEvaluatorAI{T}(trees::Vector{LevelSequence}, s::Int) where {T}
+    table = ButcherInstructionTable(trees)
+    return RKOCEvaluatorAE{T}(table,
         Matrix{T}(undef, s, s), Matrix{T}(undef, s, s),
-        Vector{T}(undef, s),
-        Matrix{T}(undef, s, length(instructions)),
-        Matrix{T}(undef, s, length(instructions)),
-        [inv(T(butcher_density(tree))) for tree in trees],
-        Vector{T}(undef, length(trees)),
+        Matrix{T}(undef, s, length(table.instructions)),
+        Matrix{T}(undef, s, length(table.instructions)),
         Matrix{T}(undef, length(trees), s),
-        Matrix{T}(undef, s, s))
+        Matrix{T}(undef, s, s), Vector{T}(undef, s),
+        [inv(T(butcher_density(tree))) for tree in trees],
+        Vector{T}(undef, length(trees)))
 end
 
 
-@inline RKOCProjectionEvaluator{T}(p::Int, s::Int) where {T} =
-    RKOCProjectionEvaluator{T}(all_rooted_trees(p), s)
+function RKOCEvaluatorBE{T}(trees::Vector{LevelSequence}, s::Int) where {T}
+    table = ButcherInstructionTable(trees)
+    return RKOCEvaluatorBE{T}(table,
+        Matrix{T}(undef, s, s), Matrix{T}(undef, s, s),
+        Vector{T}(undef, s), Vector{T}(undef, s),
+        Matrix{T}(undef, s, length(table.instructions)),
+        Matrix{T}(undef, s, length(table.instructions)),
+        [inv(T(butcher_density(tree))) for tree in trees],
+        Vector{T}(undef, length(trees)))
+end
 
 
-############################################ RESIDUAL COMPUTATION (FORWARD PASS)
+function RKOCEvaluatorBI{T}(trees::Vector{LevelSequence}, s::Int) where {T}
+    table = ButcherInstructionTable(trees)
+    return RKOCEvaluatorBI{T}(table,
+        Matrix{T}(undef, s, s), Matrix{T}(undef, s, s),
+        Vector{T}(undef, s), Vector{T}(undef, s),
+        Matrix{T}(undef, s, length(table.instructions)),
+        Matrix{T}(undef, s, length(table.instructions)),
+        [inv(T(butcher_density(tree))) for tree in trees],
+        Vector{T}(undef, length(trees)))
+end
+
+
+@inline RKOCEvaluatorAE{T}(p::Int, s::Int) where {T} =
+    RKOCEvaluatorAE{T}(all_rooted_trees(p), s)
+@inline RKOCEvaluatorAI{T}(p::Int, s::Int) where {T} =
+    RKOCEvaluatorAI{T}(all_rooted_trees(p), s)
+@inline RKOCEvaluatorBE{T}(p::Int, s::Int) where {T} =
+    RKOCEvaluatorBE{T}(all_rooted_trees(p), s)
+@inline RKOCEvaluatorBI{T}(p::Int, s::Int) where {T} =
+    RKOCEvaluatorBI{T}(all_rooted_trees(p), s)
+
+
+#################################### PHI AND RESIDUAL COMPUTATION (FORWARD PASS)
 
 
 function compute_phi!(
@@ -457,7 +455,9 @@ end
 ################################################### RESHAPING COEFFICIENT ARRAYS
 
 
-function reshape_explicit!(A::Matrix{T}, x::Vector{T}) where {T}
+function reshape_explicit!(
+    A::AbstractMatrix{T}, x::AbstractVector{T}
+) where {T}
     s = size(A, 1)
     @assert s == size(A, 2)
     @assert ((s * (s - 1)) >> 1,) == size(x)
@@ -476,7 +476,9 @@ function reshape_explicit!(A::Matrix{T}, x::Vector{T}) where {T}
 end
 
 
-function reshape_explicit!(x::Vector{T}, A::Matrix{T}) where {T}
+function reshape_explicit!(
+    x::AbstractVector{T}, A::AbstractMatrix{T}
+) where {T}
     s = size(A, 1)
     @assert s == size(A, 2)
     @assert ((s * (s - 1)) >> 1,) == size(x)
@@ -491,7 +493,9 @@ function reshape_explicit!(x::Vector{T}, A::Matrix{T}) where {T}
 end
 
 
-function reshape_explicit!(A::Matrix{T}, b::Vector{T}, x::Vector{T}) where {T}
+function reshape_explicit!(
+    A::AbstractMatrix{T}, b::AbstractVector{T}, x::AbstractVector{T}
+) where {T}
     s = length(b)
     @assert (s, s) == size(A)
     @assert ((s * (s + 1)) >> 1,) == size(x)
@@ -513,7 +517,9 @@ function reshape_explicit!(A::Matrix{T}, b::Vector{T}, x::Vector{T}) where {T}
 end
 
 
-function reshape_explicit!(x::Vector{T}, A::Matrix{T}, b::Vector{T}) where {T}
+function reshape_explicit!(
+    x::AbstractVector{T}, A::AbstractMatrix{T}, b::AbstractVector{T}
+) where {T}
     s = length(b)
     @assert (s, s) == size(A)
     @assert ((s * (s + 1)) >> 1,) == size(x)
@@ -531,34 +537,140 @@ function reshape_explicit!(x::Vector{T}, A::Matrix{T}, b::Vector{T}) where {T}
 end
 
 
-function reshape_implicit!(A::Matrix{T}, b::Vector{T}, x::Vector{T}) where {T}
-    s = length(b)
-    @assert (s, s) == size(A)
+function reshape_implicit!(
+    A::AbstractMatrix{T}, x::AbstractVector{T}
+) where {T}
+    s = size(A, 1)
+    @assert s == size(A, 2)
+    @assert (s * s,) == size(x)
+    offset = 0
+    for i = 1:s
+        @simd ivdep for j = 1:s
+            @inbounds A[i, j] = x[offset+j]
+        end
+        offset += s
+    end
+    return A
+end
+
+
+function reshape_implicit!(
+    x::AbstractVector{T}, A::AbstractMatrix{T}
+) where {T}
+    s = size(A, 1)
+    @assert s == size(A, 2)
+    @assert (s * s,) == size(x)
+    offset = 0
+    for i = 1:s
+        @simd ivdep for j = 1:s
+            @inbounds x[offset+j] = A[i, j]
+        end
+        offset += s
+    end
+    return x
+end
+
+
+function reshape_implicit!(
+    A::AbstractMatrix{T}, b::AbstractVector{T}, x::AbstractVector{T}
+) where {T}
+    s = size(A, 1)
+    @assert s == size(A, 2)
     @assert (s * (s + 1),) == size(x)
-    n_squared = s * s
-    @simd ivdep for i = 1:n_squared
-        @inbounds A[i] = x[i]
+    offset = 0
+    for i = 1:s
+        @simd ivdep for j = 1:s
+            @inbounds A[i, j] = x[offset+j]
+        end
+        offset += s
     end
     @simd ivdep for i = 1:s
-        @inbounds b[i] = x[n_squared+i]
+        @inbounds b[i] = x[offset+i]
     end
     return (A, b)
 end
 
 
-function reshape_implicit!(x::Vector{T}, A::Matrix{T}, b::Vector{T}) where {T}
-    s = length(b)
-    @assert (s, s) == size(A)
+function reshape_implicit!(
+    x::AbstractVector{T}, A::AbstractMatrix{T}, b::AbstractVector{T}
+) where {T}
+    s = size(A, 1)
+    @assert s == size(A, 2)
     @assert (s * (s + 1),) == size(x)
-    n_squared = s * s
-    @simd ivdep for i = 1:n_squared
-        @inbounds x[i] = A[i]
+    offset = 0
+    for i = 1:s
+        @simd ivdep for j = 1:s
+            @inbounds x[offset+j] = A[i, j]
+        end
+        offset += s
     end
     @simd ivdep for i = 1:s
-        @inbounds x[n_squared+i] = b[i]
+        @inbounds x[offset+i] = b[i]
     end
     return x
 end
+
+
+function test_reshape_operators()
+    let
+        A, b = reshape_explicit!(
+            Matrix{BigFloat}(undef, 3, 3),
+            Vector{BigFloat}(undef, 3),
+            BigFloat[1, 2, 3, 4, 5, 6])
+        @assert A == BigFloat[0 0 0; 1 0 0; 2 3 0]
+        @assert b == BigFloat[4, 5, 6]
+    end
+    let
+        x = reshape_explicit!(
+            Vector{BigFloat}(undef, 6),
+            BigFloat[0 0 0; 1 0 0; 2 3 0],
+            BigFloat[4, 5, 6])
+        @assert x == BigFloat[1, 2, 3, 4, 5, 6]
+    end
+    let
+        A = reshape_explicit!(
+            Matrix{BigFloat}(undef, 3, 3),
+            BigFloat[1, 2, 3])
+        @assert A == BigFloat[0 0 0; 1 0 0; 2 3 0]
+    end
+    let
+        x = reshape_explicit!(
+            Vector{BigFloat}(undef, 3),
+            BigFloat[0 0 0; 1 0 0; 2 3 0])
+        @assert x == BigFloat[1, 2, 3]
+    end
+    let
+        A, b = reshape_implicit!(
+            Matrix{BigFloat}(undef, 3, 3),
+            Vector{BigFloat}(undef, 3),
+            BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+        @assert A == BigFloat[1 2 3; 4 5 6; 7 8 9]
+        @assert b == BigFloat[10, 11, 12]
+    end
+    let
+        x = reshape_implicit!(
+            Vector{BigFloat}(undef, 12),
+            BigFloat[1 2 3; 4 5 6; 7 8 9],
+            BigFloat[10, 11, 12])
+        @assert x == BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+    end
+    let
+        A = reshape_implicit!(
+            Matrix{BigFloat}(undef, 3, 3),
+            BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9])
+        @assert A == BigFloat[1 2 3; 4 5 6; 7 8 9]
+    end
+    let
+        x = reshape_implicit!(
+            Vector{BigFloat}(undef, 9),
+            BigFloat[1 2 3; 4 5 6; 7 8 9])
+        @assert x == BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9]
+    end
+    return true
+end
+
+
+############################################################## FUNCTOR INTERFACE
 
 
 function populate_Q!(
@@ -576,99 +688,162 @@ function populate_Q!(
 end
 
 
-############################################################## FUNCTOR INTERFACE
+function residual_norm_squared(residuals::AbstractVector{T}) where {T}
+    result = zero(T)
+    for r in residuals
+        result += abs2(r)
+    end
+    return result
+end
 
 
-function (ev::RKOCEvaluator{T})(x::Vector{T}) where {T}
+function (ev::RKOCEvaluatorAE{T})(x::Vector{T}) where {T}
+    reshape_explicit!(ev.A, x)
+    compute_phi!(ev.phi, ev.A, ev.table.instructions)
+    populate_Q!(ev.Q, ev.phi, ev.table.output_indices)
+    gram_schmidt_qr!(ev.Q)
+    compute_residuals!(ev.residuals, ev.Q, ev.inv_gamma)
+    return residual_norm_squared(ev.residuals)
+end
+
+
+function (ev::RKOCEvaluatorAI{T})(x::Vector{T}) where {T}
+    reshape_implicit!(ev.A, x)
+    compute_phi!(ev.phi, ev.A, ev.table.instructions)
+    populate_Q!(ev.Q, ev.phi, ev.table.output_indices)
+    gram_schmidt_qr!(ev.Q)
+    compute_residuals!(ev.residuals, ev.Q, ev.inv_gamma)
+    return residual_norm_squared(ev.residuals)
+end
+
+
+function (ev::RKOCEvaluatorBE{T})(x::Vector{T}) where {T}
     reshape_explicit!(ev.A, ev.b, x)
-    compute_phi!(ev.phi, ev.A, ev.instructions)
+    compute_phi!(ev.phi, ev.A, ev.table.instructions)
     compute_residuals!(ev.residuals,
-        ev.b, ev.phi, ev.inv_gamma, ev.output_indices)
-    result = zero(T)
-    for i = 1:length(ev.residuals)
-        residual = @inbounds ev.residuals[i]
-        result += residual * residual
-    end
-    return result
+        ev.b, ev.phi, ev.inv_gamma, ev.table.output_indices)
+    return residual_norm_squared(ev.residuals)
 end
 
 
-function (proj::RKOCProjectionEvaluator{T})(x::Vector{T}) where {T}
-    reshape_explicit!(proj.A, x)
-    compute_phi!(proj.phi, proj.A, proj.instructions)
-    populate_Q!(proj.Q, proj.phi, proj.output_indices)
-    gram_schmidt_qr!(proj.Q)
-    compute_residuals!(proj.residuals, proj.Q, proj.inv_gamma)
-    result = zero(T)
-    for i = 1:length(proj.residuals)
-        residual = @inbounds proj.residuals[i]
-        result += residual * residual
-    end
-    return result
+function (ev::RKOCEvaluatorBI{T})(x::Vector{T}) where {T}
+    reshape_implicit!(ev.A, ev.b, x)
+    compute_phi!(ev.phi, ev.A, ev.table.instructions)
+    compute_residuals!(ev.residuals,
+        ev.b, ev.phi, ev.inv_gamma, ev.table.output_indices)
+    return residual_norm_squared(ev.residuals)
 end
 
 
-struct RKOCEvaluatorAdjoint{T}
-    ev::RKOCEvaluator{T}
+struct RKOCEvaluatorAEAdjoint{T}
+    ev::RKOCEvaluatorAE{T}
+end
+struct RKOCEvaluatorAIAdjoint{T}
+    ev::RKOCEvaluatorAI{T}
+end
+struct RKOCEvaluatorBEAdjoint{T}
+    ev::RKOCEvaluatorBE{T}
+end
+struct RKOCEvaluatorBIAdjoint{T}
+    ev::RKOCEvaluatorBI{T}
 end
 
 
-@inline Base.adjoint(ev::RKOCEvaluator{T}) where {T} =
-    RKOCEvaluatorAdjoint{T}(ev)
+@inline Base.adjoint(ev::RKOCEvaluatorAE{T}) where {T} =
+    RKOCEvaluatorAEAdjoint{T}(ev)
+@inline Base.adjoint(ev::RKOCEvaluatorAI{T}) where {T} =
+    RKOCEvaluatorAIAdjoint{T}(ev)
+@inline Base.adjoint(ev::RKOCEvaluatorBE{T}) where {T} =
+    RKOCEvaluatorBEAdjoint{T}(ev)
+@inline Base.adjoint(ev::RKOCEvaluatorBI{T}) where {T} =
+    RKOCEvaluatorBIAdjoint{T}(ev)
 
 
-function (adj::RKOCEvaluatorAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
-    reshape_explicit!(adj.ev.A, adj.ev.b, x)
-    compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.instructions)
-    compute_residuals!(adj.ev.residuals,
-        adj.ev.b, adj.ev.phi, adj.ev.inv_gamma, adj.ev.output_indices)
+function (adj::RKOCEvaluatorAEAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
+    reshape_explicit!(adj.ev.A, x)
+    compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
+    populate_Q!(adj.ev.Q, adj.ev.phi, adj.ev.table.output_indices)
+    gram_schmidt_qr!(adj.ev.Q, adj.ev.R)
+    compute_residuals!(adj.ev.residuals, adj.ev.b,
+        adj.ev.Q, adj.ev.inv_gamma)
+    solve_upper_triangular!(adj.ev.b, adj.ev.R)
     initialize_dphi_from_residual!(adj.ev.dphi,
-        adj.ev.b, adj.ev.residuals, adj.ev.source_indices)
-    compute_dphi_backward!(adj.ev.dphi, adj.ev.A, adj.ev.phi,
-        adj.ev.child_indices, adj.ev.sibling_ranges, adj.ev.sibling_indices)
+        adj.ev.b, adj.ev.residuals, adj.ev.table.source_indices)
+    compute_dphi_backward!(adj.ev.dphi,
+        adj.ev.A, adj.ev.phi, adj.ev.table.child_indices,
+        adj.ev.table.sibling_ranges, adj.ev.table.sibling_indices)
     compute_dA_backward!(adj.ev.dA,
-        adj.ev.phi, adj.ev.dphi, adj.ev.child_indices)
+        adj.ev.phi, adj.ev.dphi, adj.ev.table.child_indices)
+    reshape_explicit!(g, adj.ev.dA)
+    return g
+end
+
+
+function (adj::RKOCEvaluatorAIAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
+    reshape_implicit!(adj.ev.A, x)
+    compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
+    populate_Q!(adj.ev.Q, adj.ev.phi, adj.ev.table.output_indices)
+    gram_schmidt_qr!(adj.ev.Q, adj.ev.R)
+    compute_residuals!(adj.ev.residuals, adj.ev.b,
+        adj.ev.Q, adj.ev.inv_gamma)
+    solve_upper_triangular!(adj.ev.b, adj.ev.R)
+    initialize_dphi_from_residual!(adj.ev.dphi,
+        adj.ev.b, adj.ev.residuals, adj.ev.table.source_indices)
+    compute_dphi_backward!(adj.ev.dphi,
+        adj.ev.A, adj.ev.phi, adj.ev.table.child_indices,
+        adj.ev.table.sibling_ranges, adj.ev.table.sibling_indices)
+    compute_dA_backward!(adj.ev.dA,
+        adj.ev.phi, adj.ev.dphi, adj.ev.table.child_indices)
+    reshape_implicit!(g, adj.ev.dA)
+    return g
+end
+
+
+function (adj::RKOCEvaluatorBEAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
+    reshape_explicit!(adj.ev.A, adj.ev.b, x)
+    compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
+    compute_residuals!(adj.ev.residuals,
+        adj.ev.b, adj.ev.phi, adj.ev.inv_gamma, adj.ev.table.output_indices)
+    initialize_dphi_from_residual!(adj.ev.dphi,
+        adj.ev.b, adj.ev.residuals, adj.ev.table.source_indices)
+    compute_dphi_backward!(adj.ev.dphi,
+        adj.ev.A, adj.ev.phi, adj.ev.table.child_indices,
+        adj.ev.table.sibling_ranges, adj.ev.table.sibling_indices)
+    compute_dA_backward!(adj.ev.dA,
+        adj.ev.phi, adj.ev.dphi, adj.ev.table.child_indices)
     compute_db_backward!(adj.ev.db,
-        adj.ev.phi, adj.ev.residuals, adj.ev.output_indices)
+        adj.ev.phi, adj.ev.residuals, adj.ev.table.output_indices)
     reshape_explicit!(g, adj.ev.dA, adj.ev.db)
     return g
 end
 
 
-@inline (adj::RKOCEvaluatorAdjoint{T})(x::Vector{T}) where {T} =
-    adj(similar(x), x)
-
-
-struct RKOCProjectionAdjoint{T}
-    proj::RKOCProjectionEvaluator{T}
-end
-
-
-@inline Base.adjoint(proj::RKOCProjectionEvaluator{T}) where {T} =
-    RKOCProjectionAdjoint{T}(proj)
-
-
-function (adj::RKOCProjectionAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
-    reshape_explicit!(adj.proj.A, x)
-    compute_phi!(adj.proj.phi, adj.proj.A, adj.proj.instructions)
-    populate_Q!(adj.proj.Q, adj.proj.phi, adj.proj.output_indices)
-    gram_schmidt_qr!(adj.proj.Q, adj.proj.R)
-    compute_residuals!(adj.proj.residuals, adj.proj.b,
-        adj.proj.Q, adj.proj.inv_gamma)
-    solve_upper_triangular!(adj.proj.b, adj.proj.R)
-    initialize_dphi_from_residual!(adj.proj.dphi,
-        adj.proj.b, adj.proj.residuals, adj.proj.source_indices)
-    compute_dphi_backward!(adj.proj.dphi,
-        adj.proj.A, adj.proj.phi, adj.proj.child_indices,
-        adj.proj.sibling_ranges, adj.proj.sibling_indices)
-    compute_dA_backward!(adj.proj.dA,
-        adj.proj.phi, adj.proj.dphi, adj.proj.child_indices)
-    reshape_explicit!(g, adj.proj.dA)
+function (adj::RKOCEvaluatorBIAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
+    reshape_implicit!(adj.ev.A, adj.ev.b, x)
+    compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
+    compute_residuals!(adj.ev.residuals,
+        adj.ev.b, adj.ev.phi, adj.ev.inv_gamma, adj.ev.table.output_indices)
+    initialize_dphi_from_residual!(adj.ev.dphi,
+        adj.ev.b, adj.ev.residuals, adj.ev.table.source_indices)
+    compute_dphi_backward!(adj.ev.dphi,
+        adj.ev.A, adj.ev.phi, adj.ev.table.child_indices,
+        adj.ev.table.sibling_ranges, adj.ev.table.sibling_indices)
+    compute_dA_backward!(adj.ev.dA,
+        adj.ev.phi, adj.ev.dphi, adj.ev.table.child_indices)
+    compute_db_backward!(adj.ev.db,
+        adj.ev.phi, adj.ev.residuals, adj.ev.table.output_indices)
+    reshape_implicit!(g, adj.ev.dA, adj.ev.db)
     return g
 end
 
 
-@inline (adj::RKOCProjectionAdjoint{T})(x::Vector{T}) where {T} =
+@inline (adj::RKOCEvaluatorAEAdjoint{T})(x::Vector{T}) where {T} =
+    adj(similar(x), x)
+@inline (adj::RKOCEvaluatorAIAdjoint{T})(x::Vector{T}) where {T} =
+    adj(similar(x), x)
+@inline (adj::RKOCEvaluatorBEAdjoint{T})(x::Vector{T}) where {T} =
+    adj(similar(x), x)
+@inline (adj::RKOCEvaluatorBIAdjoint{T})(x::Vector{T}) where {T} =
     adj(similar(x), x)
 
 

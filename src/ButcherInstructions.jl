@@ -278,7 +278,7 @@ function butcher_symmetry(tree::LevelSequence)
 end
 
 
-############################################################# INSTRUCTION TABLES
+########################################################### BUTCHER INSTRUCTIONS
 
 
 struct ButcherInstruction
@@ -423,7 +423,7 @@ function necessary_subtrees(trees::Vector{LevelSequence})
 end
 
 
-function build_instruction_table(
+function build_instructions(
     trees::Vector{LevelSequence};
     optimize::Bool=true, sort_by_depth::Bool=true
 )
@@ -445,24 +445,7 @@ function build_instruction_table(
 end
 
 
-function compute_children_siblings(instructions::Vector{ButcherInstruction})
-    children = [-1 for _ in instructions]
-    siblings = [Pair{Int,Int}[] for _ in instructions]
-    for (i, instruction) in enumerate(instructions)
-        if instruction.left == -1
-            @assert instruction.right == -1
-        elseif instruction.right == -1
-            children[instruction.left] = i
-        else
-            push!(siblings[instruction.left], instruction.right => i)
-            push!(siblings[instruction.right], instruction.left => i)
-        end
-    end
-    return (children, siblings)
-end
-
-
-function execute_instruction_table(instructions::Vector{ButcherInstruction})
+function execute_instructions(instructions::Vector{ButcherInstruction})
     result = LevelSequence[]
     for instruction in instructions
         if instruction.left == -1
@@ -482,6 +465,53 @@ function execute_instruction_table(instructions::Vector{ButcherInstruction})
     end
     @assert all(is_canonical, result)
     return result
+end
+
+
+##################################################### BUTCHER INSTRUCTION TABLES
+
+
+struct ButcherInstructionTable
+    instructions::Vector{ButcherInstruction}
+    output_indices::Vector{Int}
+    source_indices::Vector{Int}
+    child_indices::Vector{Int}
+    sibling_indices::Vector{Pair{Int,Int}}
+    sibling_ranges::Vector{UnitRange{Int}}
+end
+
+
+function compute_children_siblings(instructions::Vector{ButcherInstruction})
+    children = [-1 for _ in instructions]
+    siblings = [Pair{Int,Int}[] for _ in instructions]
+    for (i, instruction) in enumerate(instructions)
+        if instruction.left == -1
+            @assert instruction.right == -1
+        elseif instruction.right == -1
+            children[instruction.left] = i
+        else
+            push!(siblings[instruction.left], instruction.right => i)
+            push!(siblings[instruction.right], instruction.left => i)
+        end
+    end
+    return (children, siblings)
+end
+
+
+function ButcherInstructionTable(trees::Vector{LevelSequence})
+    instructions, output_indices = build_instructions(trees)
+    source_indices = [-1 for _ in instructions]
+    for (i, j) in enumerate(output_indices)
+        source_indices[j] = i
+    end
+    child_indices, sibling_lists = compute_children_siblings(instructions)
+    sibling_indices = reduce(vcat, sibling_lists)
+    end_indices = cumsum(length.(sibling_lists))
+    start_indices = vcat([1], end_indices[1:end-1] .+ 1)
+    sibling_ranges = UnitRange{Int}.(start_indices, end_indices)
+    return ButcherInstructionTable(
+        instructions, output_indices, source_indices,
+        child_indices, sibling_indices, sibling_ranges)
 end
 
 
