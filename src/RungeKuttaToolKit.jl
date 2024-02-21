@@ -85,7 +85,7 @@ end
 
 function RKOCEvaluatorAI{T}(trees::Vector{LevelSequence}, s::Int) where {T}
     table = ButcherInstructionTable(trees)
-    return RKOCEvaluatorAE{T}(table,
+    return RKOCEvaluatorAI{T}(table,
         Matrix{T}(undef, s, s), Matrix{T}(undef, s, s),
         Matrix{T}(undef, s, length(table.instructions)),
         Matrix{T}(undef, s, length(table.instructions)),
