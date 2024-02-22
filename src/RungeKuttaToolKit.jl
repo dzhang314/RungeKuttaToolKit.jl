@@ -847,4 +847,40 @@ end
     adj(similar(x), x)
 
 
+function test_functors(::Type{T}) where {T}
+    _zero = zero(T)
+    _one = one(T)
+    _two = _one + _one
+    _half = inv(_two)
+    _three = _two + _one
+    _third = inv(_three)
+    _six = _three + _three
+    _sixth = inv(_six)
+    ev_ae = RKOCEvaluatorAE{T}(4, 4)
+    ev_be = RKOCEvaluatorBE{T}(4, 4)
+    ev_ai = RKOCEvaluatorAI{T}(4, 4)
+    ev_bi = RKOCEvaluatorBI{T}(4, 4)
+    x_ae = [_half, _zero, _half, _zero, _zero, _one]
+    x_be = [_half, _zero, _half, _zero, _zero, _one,
+        _sixth, _third, _third, _sixth]
+    x_ai = [_zero, _zero, _zero, _zero, _half, _zero, _zero, _zero,
+        _zero, _half, _zero, _zero, _zero, _zero, _one, _zero]
+    x_bi = [_zero, _zero, _zero, _zero, _half, _zero, _zero, _zero,
+        _zero, _half, _zero, _zero, _zero, _zero, _one, _zero,
+        _sixth, _third, _third, _sixth]
+    _eps = eps(T)
+    _eps += _eps
+    _eps_squared = _eps * _eps
+    @assert abs(ev_ae(x_ae)) < _eps_squared
+    @assert abs(ev_be(x_be)) < _eps_squared
+    @assert abs(ev_ai(x_ai)) < _eps_squared
+    @assert abs(ev_bi(x_bi)) < _eps_squared
+    @assert all(abs.(ev_ae'(x_ae)) .< _eps)
+    @assert all(abs.(ev_be'(x_be)) .< _eps)
+    @assert all(abs.(ev_ai'(x_ai)) .< _eps)
+    @assert all(abs.(ev_bi'(x_bi)) .< _eps)
+    return true
+end
+
+
 end # module RungeKuttaToolKit
