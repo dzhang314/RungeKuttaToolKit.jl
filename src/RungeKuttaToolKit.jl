@@ -339,7 +339,7 @@ end
 ########################################### GRADIENT COMPUTATION (BACKWARD PASS)
 
 
-function initialize_dphi_from_residual!(
+function pullback_dphi_from_residual!(
     dphi::AbstractMatrix{T}, b::AbstractVector{T},
     residuals::AbstractVector{T}, source_indices::AbstractVector{Int}
 ) where {T}
@@ -364,7 +364,7 @@ function initialize_dphi_from_residual!(
 end
 
 
-function compute_dphi_backward!(
+function pullback_dphi!(
     dphi::AbstractMatrix{T}, A::AbstractMatrix{T}, phi::AbstractMatrix{T},
     child_indices::AbstractVector{Int},
     sibling_ranges::AbstractVector{UnitRange{Int}},
@@ -397,7 +397,7 @@ function compute_dphi_backward!(
 end
 
 
-function compute_dA_backward!(
+function pullback_dA!(
     dA::AbstractMatrix{T}, phi::AbstractMatrix{T}, dphi::AbstractMatrix{T},
     child_indices::AbstractVector{Int}
 ) where {T}
@@ -425,7 +425,7 @@ function compute_dA_backward!(
 end
 
 
-function compute_db_backward!(
+function pullback_db!(
     db::AbstractVector{T}, phi::AbstractMatrix{T},
     residuals::AbstractVector{T}, output_indices::AbstractVector{Int}
 ) where {T}
@@ -767,12 +767,12 @@ function (adj::RKOCEvaluatorAEAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
     compute_residuals!(adj.ev.residuals, adj.ev.b,
         adj.ev.Q, adj.ev.inv_gamma)
     solve_upper_triangular!(adj.ev.b, adj.ev.R)
-    initialize_dphi_from_residual!(adj.ev.dphi,
+    pullback_dphi_from_residual!(adj.ev.dphi,
         adj.ev.b, adj.ev.residuals, adj.ev.table.source_indices)
-    compute_dphi_backward!(adj.ev.dphi,
+    pullback_dphi!(adj.ev.dphi,
         adj.ev.A, adj.ev.phi, adj.ev.table.child_indices,
         adj.ev.table.sibling_ranges, adj.ev.table.sibling_indices)
-    compute_dA_backward!(adj.ev.dA,
+    pullback_dA!(adj.ev.dA,
         adj.ev.phi, adj.ev.dphi, adj.ev.table.child_indices)
     reshape_explicit!(g, adj.ev.dA)
     return g
@@ -787,12 +787,12 @@ function (adj::RKOCEvaluatorAIAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
     compute_residuals!(adj.ev.residuals, adj.ev.b,
         adj.ev.Q, adj.ev.inv_gamma)
     solve_upper_triangular!(adj.ev.b, adj.ev.R)
-    initialize_dphi_from_residual!(adj.ev.dphi,
+    pullback_dphi_from_residual!(adj.ev.dphi,
         adj.ev.b, adj.ev.residuals, adj.ev.table.source_indices)
-    compute_dphi_backward!(adj.ev.dphi,
+    pullback_dphi!(adj.ev.dphi,
         adj.ev.A, adj.ev.phi, adj.ev.table.child_indices,
         adj.ev.table.sibling_ranges, adj.ev.table.sibling_indices)
-    compute_dA_backward!(adj.ev.dA,
+    pullback_dA!(adj.ev.dA,
         adj.ev.phi, adj.ev.dphi, adj.ev.table.child_indices)
     reshape_implicit!(g, adj.ev.dA)
     return g
@@ -804,14 +804,14 @@ function (adj::RKOCEvaluatorBEAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
     compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
     compute_residuals!(adj.ev.residuals,
         adj.ev.b, adj.ev.phi, adj.ev.inv_gamma, adj.ev.table.output_indices)
-    initialize_dphi_from_residual!(adj.ev.dphi,
+    pullback_dphi_from_residual!(adj.ev.dphi,
         adj.ev.b, adj.ev.residuals, adj.ev.table.source_indices)
-    compute_dphi_backward!(adj.ev.dphi,
+    pullback_dphi!(adj.ev.dphi,
         adj.ev.A, adj.ev.phi, adj.ev.table.child_indices,
         adj.ev.table.sibling_ranges, adj.ev.table.sibling_indices)
-    compute_dA_backward!(adj.ev.dA,
+    pullback_dA!(adj.ev.dA,
         adj.ev.phi, adj.ev.dphi, adj.ev.table.child_indices)
-    compute_db_backward!(adj.ev.db,
+    pullback_db!(adj.ev.db,
         adj.ev.phi, adj.ev.residuals, adj.ev.table.output_indices)
     reshape_explicit!(g, adj.ev.dA, adj.ev.db)
     return g
@@ -823,14 +823,14 @@ function (adj::RKOCEvaluatorBIAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
     compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
     compute_residuals!(adj.ev.residuals,
         adj.ev.b, adj.ev.phi, adj.ev.inv_gamma, adj.ev.table.output_indices)
-    initialize_dphi_from_residual!(adj.ev.dphi,
+    pullback_dphi_from_residual!(adj.ev.dphi,
         adj.ev.b, adj.ev.residuals, adj.ev.table.source_indices)
-    compute_dphi_backward!(adj.ev.dphi,
+    pullback_dphi!(adj.ev.dphi,
         adj.ev.A, adj.ev.phi, adj.ev.table.child_indices,
         adj.ev.table.sibling_ranges, adj.ev.table.sibling_indices)
-    compute_dA_backward!(adj.ev.dA,
+    pullback_dA!(adj.ev.dA,
         adj.ev.phi, adj.ev.dphi, adj.ev.table.child_indices)
-    compute_db_backward!(adj.ev.db,
+    pullback_db!(adj.ev.db,
         adj.ev.phi, adj.ev.residuals, adj.ev.table.output_indices)
     reshape_implicit!(g, adj.ev.dA, adj.ev.db)
     return g
