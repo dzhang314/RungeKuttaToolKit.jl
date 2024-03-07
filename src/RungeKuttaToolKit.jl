@@ -130,7 +130,7 @@ end
     RKOCEvaluatorBI{T}(all_rooted_trees(p), s)
 
 
-#################################### PHI AND RESIDUAL COMPUTATION (FORWARD PASS)
+################################################### PHI AND RESIDUAL COMPUTATION
 
 
 function compute_phi!(
@@ -181,11 +181,11 @@ function compute_residuals!(
     @assert (t,) == size(output_indices)
     _zero = zero(T)
     @inbounds for (i, k) in enumerate(output_indices)
-        result = _zero
+        overlap = _zero
         for j = 1:s
-            result += b[j] * phi[j, k]
+            overlap += b[j] * phi[j, k]
         end
-        residuals[i] = result - inv_gamma[i]
+        residuals[i] = overlap - inv_gamma[i]
     end
     return residuals
 end
@@ -242,101 +242,73 @@ function compute_residuals!(
 end
 
 
-########################################################### LEAST-SQUARES SOLVER
+############################################ GRADIENT COMPUTATION (FORWARD-MODE)
 
 
-@inline inv_sqrt(x::Float16) = rsqrt(x)
-@inline inv_sqrt(x::Float32) = rsqrt(x)
-@inline inv_sqrt(x::Float64) = rsqrt(x)
-@inline inv_sqrt(x::MultiFloat{T,N}) where {T,N} = rsqrt(x)
-@inline inv_sqrt(x::T) where {T} = inv(sqrt(x))
-
-
-function gram_schmidt_qr!(Q::AbstractMatrix{T}) where {T}
-    t, s = size(Q)
-    _zero = zero(T)
-    @inbounds for i = 1:s
-        squared_norm = _zero
-        for k = 1:t
-            squared_norm += abs2(Q[k, i])
-        end
-        if !iszero(squared_norm)
-            inv_norm = inv_sqrt(squared_norm)
-            @simd ivdep for k = 1:t
-                Q[k, i] *= inv_norm
-            end
-            for j = i+1:s
-                overlap = _zero
-                for k = 1:t
-                    overlap += Q[k, i] * Q[k, j]
-                end
-                @simd ivdep for k = 1:t
-                    Q[k, j] -= overlap * Q[k, i]
-                end
-            end
-        end
-    end
-    return Q
-end
-
-
-function gram_schmidt_qr!(Q::AbstractMatrix{T}, R::AbstractMatrix{T}) where {T}
-    t, s = size(Q)
-    @assert (s, s) == size(R)
-    # NOTE: R is stored transposed, and its diagonal is stored inverted.
-    _zero = zero(T)
-    @inbounds for i = 1:s
-        squared_norm = _zero
-        for k = 1:t
-            squared_norm += abs2(Q[k, i])
-        end
-        if !iszero(squared_norm)
-            inv_norm = inv_sqrt(squared_norm)
-            R[i, i] = inv_norm
-            @simd ivdep for k = 1:t
-                Q[k, i] *= inv_norm
-            end
-            for j = i+1:s
-                overlap = _zero
-                for k = 1:t
-                    overlap += Q[k, i] * Q[k, j]
-                end
-                R[j, i] = overlap
-                @simd ivdep for k = 1:t
-                    Q[k, j] -= overlap * Q[k, i]
-                end
-            end
-        else
-            R[i, i] = _zero
-        end
-    end
-    return (Q, R)
-end
-
-
-function solve_upper_triangular!(
-    b::AbstractVector{T}, R::AbstractMatrix{T}
+function pushforward_dphi!(
+    dphi::AbstractMatrix{T}, phi::AbstractMatrix{T},
+    dA::AbstractMatrix{T}, A::AbstractMatrix{T},
+    instructions::Vector{ButcherInstruction}
 ) where {T}
-    s = length(b)
-    @assert (s, s) == size(R)
+    @assert size(dphi) == size(phi)
+    s = size(dphi, 1)
+    @assert (s, s) == size(dA)
+    @assert (s, s) == size(A)
+    @assert size(dphi, 2) == length(instructions)
     _zero = zero(T)
-    @inbounds for i = s:-1:1
-        if iszero(R[i, i])
-            b[i] = _zero
-        else
-            overlap = _zero
-            for j = i+1:s
-                overlap += R[j, i] * b[j]
+    @inbounds for (k, instruction) in enumerate(instructions)
+        p, q = instruction.left, instruction.right
+        if p == -1
+            @assert q == -1
+            @simd ivdep for j = 1:s
+                dphi[j, k] = _zero
             end
-            b[i] = R[i, i] * (b[i] - overlap)
+        elseif q == -1
+            @simd ivdep for j = 1:s
+                dphi[j, k] = _zero
+            end
+            for i = 1:s
+                temp = phi[i, p]
+                dtemp = dphi[i, p]
+                @simd ivdep for j = 1:s
+                    dphi[j, k] += dtemp * A[j, i] + temp * dA[j, i]
+                end
+            end
+        else
+            @simd ivdep for j = 1:s
+                dphi[j, k] = dphi[j, p] * phi[j, q] + phi[j, p] * dphi[j, q]
+            end
         end
     end
-    return b
+    return dphi
 end
 
 
+function pushforward_dresiduals!(
+    dresiduals::AbstractVector{T},
+    db::AbstractVector{T}, b::AbstractVector{T},
+    dphi::AbstractMatrix{T}, phi::AbstractMatrix{T},
+    output_indices::AbstractVector{Int}
+) where {T}
+    t = length(dresiduals)
+    s = length(db)
+    @assert (s,) == size(b)
+    @assert s == size(dphi, 1)
+    @assert size(dphi) == size(phi)
+    @assert (t,) == size(output_indices)
+    _zero = zero(T)
+    @inbounds for (i, k) in enumerate(output_indices)
+        doverlap = _zero
+        for j = 1:s
+            doverlap += db[j] * phi[j, k] + b[j] * dphi[j, k]
+        end
+        dresiduals[i] = doverlap
+    end
+    return dresiduals
+end
 
-########################################### GRADIENT COMPUTATION (BACKWARD PASS)
+
+############################################ GRADIENT COMPUTATION (REVERSE-MODE)
 
 
 function pullback_dphi_from_residual!(
@@ -449,6 +421,99 @@ function pullback_db!(
         end
     end
     return db
+end
+
+
+########################################################### LEAST-SQUARES SOLVER
+
+
+@inline inv_sqrt(x::Float16) = rsqrt(x)
+@inline inv_sqrt(x::Float32) = rsqrt(x)
+@inline inv_sqrt(x::Float64) = rsqrt(x)
+@inline inv_sqrt(x::MultiFloat{T,N}) where {T,N} = rsqrt(x)
+@inline inv_sqrt(x::T) where {T} = inv(sqrt(x))
+
+
+function gram_schmidt_qr!(Q::AbstractMatrix{T}) where {T}
+    t, s = size(Q)
+    _zero = zero(T)
+    @inbounds for i = 1:s
+        squared_norm = _zero
+        for k = 1:t
+            squared_norm += abs2(Q[k, i])
+        end
+        if !iszero(squared_norm)
+            inv_norm = inv_sqrt(squared_norm)
+            @simd ivdep for k = 1:t
+                Q[k, i] *= inv_norm
+            end
+            for j = i+1:s
+                overlap = _zero
+                for k = 1:t
+                    overlap += Q[k, i] * Q[k, j]
+                end
+                @simd ivdep for k = 1:t
+                    Q[k, j] -= overlap * Q[k, i]
+                end
+            end
+        end
+    end
+    return Q
+end
+
+
+function gram_schmidt_qr!(Q::AbstractMatrix{T}, R::AbstractMatrix{T}) where {T}
+    t, s = size(Q)
+    @assert (s, s) == size(R)
+    # NOTE: R is stored transposed, and its diagonal is stored inverted.
+    _zero = zero(T)
+    @inbounds for i = 1:s
+        squared_norm = _zero
+        for k = 1:t
+            squared_norm += abs2(Q[k, i])
+        end
+        if !iszero(squared_norm)
+            inv_norm = inv_sqrt(squared_norm)
+            R[i, i] = inv_norm
+            @simd ivdep for k = 1:t
+                Q[k, i] *= inv_norm
+            end
+            for j = i+1:s
+                overlap = _zero
+                for k = 1:t
+                    overlap += Q[k, i] * Q[k, j]
+                end
+                R[j, i] = overlap
+                @simd ivdep for k = 1:t
+                    Q[k, j] -= overlap * Q[k, i]
+                end
+            end
+        else
+            R[i, i] = _zero
+        end
+    end
+    return (Q, R)
+end
+
+
+function solve_upper_triangular!(
+    b::AbstractVector{T}, R::AbstractMatrix{T}
+) where {T}
+    s = length(b)
+    @assert (s, s) == size(R)
+    _zero = zero(T)
+    @inbounds for i = s:-1:1
+        if iszero(R[i, i])
+            b[i] = _zero
+        else
+            overlap = _zero
+            for j = i+1:s
+                overlap += R[j, i] * b[j]
+            end
+            b[i] = R[i, i] * (b[i] - overlap)
+        end
+    end
+    return b
 end
 
 
