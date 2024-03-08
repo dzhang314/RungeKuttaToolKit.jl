@@ -14,6 +14,7 @@ using .ButcherInstructions: LevelSequence,
 
 
 export RKOCEvaluatorAE, RKOCEvaluatorAI, RKOCEvaluatorBE, RKOCEvaluatorBI
+export RKOCResidualEvaluatorAE
 
 
 struct RKOCEvaluatorAE{T}
@@ -70,6 +71,21 @@ struct RKOCEvaluatorBI{T}
 end
 
 
+struct RKOCResidualEvaluatorAE{T}
+    table::ButcherInstructionTable
+    A::Matrix{T}
+    dA::Matrix{T}
+    b::Vector{T}
+    db::Vector{T}
+    phi::Matrix{T}
+    dphi::Matrix{T}
+    Q::Matrix{T}
+    R::Matrix{T}
+    inv_gamma::Vector{T}
+    residuals::Vector{T}
+end
+
+
 function RKOCEvaluatorAE{T}(trees::Vector{LevelSequence}, s::Int) where {T}
     table = ButcherInstructionTable(trees)
     return RKOCEvaluatorAE{T}(table,
@@ -115,6 +131,22 @@ function RKOCEvaluatorBI{T}(trees::Vector{LevelSequence}, s::Int) where {T}
         Vector{T}(undef, s), Vector{T}(undef, s),
         Matrix{T}(undef, s, length(table.instructions)),
         Matrix{T}(undef, s, length(table.instructions)),
+        [inv(T(butcher_density(tree))) for tree in trees],
+        Vector{T}(undef, length(trees)))
+end
+
+
+function RKOCResidualEvaluatorAE{T}(
+    trees::Vector{LevelSequence}, s::Int
+) where {T}
+    table = ButcherInstructionTable(trees)
+    return RKOCResidualEvaluatorAE{T}(table,
+        Matrix{T}(undef, s, s), Matrix{T}(undef, s, s),
+        Vector{T}(undef, s), Vector{T}(undef, s),
+        Matrix{T}(undef, s, length(table.instructions)),
+        Matrix{T}(undef, s, length(table.instructions)),
+        Matrix{T}(undef, length(trees), s),
+        Matrix{T}(undef, s, s),
         [inv(T(butcher_density(tree))) for tree in trees],
         Vector{T}(undef, length(trees)))
 end
@@ -899,6 +931,22 @@ function (ev::RKOCEvaluatorBI{T})(x::Vector{T}) where {T}
 end
 
 
+function (ev::RKOCResidualEvaluatorAE{T})(
+    residuals::Vector{T}, x::Vector{T}
+) where {T}
+    reshape_explicit!(ev.A, x)
+    compute_phi!(ev.phi, ev.A, ev.table.instructions)
+    populate_Q!(ev.Q, ev.phi, ev.table.output_indices)
+    gram_schmidt_qr!(ev.Q)
+    compute_residuals!(residuals, ev.Q, ev.inv_gamma)
+    return residuals
+end
+
+
+@inline (ev::RKOCResidualEvaluatorAE{T})(x::Vector{T}) where {T} =
+    ev(similar(ev.residuals), x)
+
+
 struct RKOCEvaluatorAEAdjoint{T}
     ev::RKOCEvaluatorAE{T}
 end
@@ -911,6 +959,9 @@ end
 struct RKOCEvaluatorBIAdjoint{T}
     ev::RKOCEvaluatorBI{T}
 end
+struct RKOCResidualEvaluatorAEAdjoint{T}
+    ev::RKOCResidualEvaluatorAE{T}
+end
 
 
 @inline Base.adjoint(ev::RKOCEvaluatorAE{T}) where {T} =
@@ -921,6 +972,8 @@ end
     RKOCEvaluatorBEAdjoint{T}(ev)
 @inline Base.adjoint(ev::RKOCEvaluatorBI{T}) where {T} =
     RKOCEvaluatorBIAdjoint{T}(ev)
+@inline Base.adjoint(ev::RKOCResidualEvaluatorAE{T}) where {T} =
+    RKOCResidualEvaluatorAEAdjoint{T}(ev)
 
 
 function (adj::RKOCEvaluatorAEAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
@@ -998,6 +1051,37 @@ function (adj::RKOCEvaluatorBIAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
         adj.ev.phi, adj.ev.residuals, adj.ev.table.output_indices)
     reshape_implicit!(g, adj.ev.dA, adj.ev.db)
     return g
+end
+
+
+function (adj::RKOCResidualEvaluatorAEAdjoint{T})(x::Vector{T}) where {T}
+    reshape_explicit!(adj.ev.A, x)
+    compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
+    populate_Q!(adj.ev.Q, adj.ev.phi, adj.ev.table.output_indices)
+    gram_schmidt_qr!(adj.ev.Q, adj.ev.R)
+    compute_residuals_and_b!(adj.ev.residuals, adj.ev.b,
+        adj.ev.Q, adj.ev.inv_gamma)
+    solve_upper_triangular!(adj.ev.b, adj.ev.R)
+
+    dx = zero(x)
+    jacobian = Matrix{T}(undef, length(adj.ev.residuals), length(dx))
+    _one = one(T)
+    for i in eachindex(dx)
+        _zero = dx[i]
+        dx[i] = _one
+        reshape_explicit!(adj.ev.dA, dx)
+        pushforward_dphi!(adj.ev.dphi,
+            adj.ev.phi, adj.ev.dA, adj.ev.A, adj.ev.table.instructions)
+        column = view(jacobian, :, i)
+        pushforward_db!(adj.ev.db, column,
+            adj.ev.residuals, adj.ev.dphi, adj.ev.b, adj.ev.Q, adj.ev.R,
+            adj.ev.table.output_indices)
+        pushforward_dresiduals!(column,
+            adj.ev.db, adj.ev.b, adj.ev.dphi, adj.ev.phi,
+            adj.ev.table.output_indices)
+        dx[i] = _zero
+    end
+    return jacobian
 end
 
 
