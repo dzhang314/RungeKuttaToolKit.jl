@@ -284,6 +284,86 @@ function pushforward_dphi!(
 end
 
 
+function pushforward_db!(
+    db::AbstractVector{T}, temp::AbstractVector{T},
+    dphi::AbstractMatrix{T}, b::AbstractVector{T},
+    Q::AbstractMatrix{T}, R::AbstractMatrix{T},
+    output_indices::AbstractVector{Int}
+) where {T}
+    s = length(db)
+    t = length(temp)
+    @assert s == size(dphi, 1)
+    @assert (s,) == size(b)
+    @assert (t, s) == size(Q)
+    @assert (s, s) == size(R)
+    @assert (t,) == size(output_indices)
+    _zero = zero(T)
+    @simd ivdep for i = 1:s
+        @inbounds db[i] = _zero
+    end
+    @inbounds for (i, k) in enumerate(output_indices)
+        overlap = _zero
+        for j = 1:s
+            overlap += b[j] * dphi[j, k]
+        end
+        temp[i] = overlap
+    end
+    @inbounds for i = 1:s
+        overlap = _zero
+        for j = 1:t
+            overlap += Q[j, i] * temp[j]
+        end
+        db[i] = -(db[i] + overlap)
+    end
+    solve_upper_triangular!(db, R)
+    return db
+end
+
+
+function pushforward_db!(
+    db::AbstractVector{T}, temp::AbstractVector{T},
+    residuals::AbstractVector{T}, dphi::AbstractMatrix{T},
+    b::AbstractVector{T}, Q::AbstractMatrix{T}, R::AbstractMatrix{T},
+    output_indices::AbstractVector{Int}
+) where {T}
+    s = length(db)
+    t = length(temp)
+    @assert (t,) == size(residuals)
+    @assert s == size(dphi, 1)
+    @assert (s,) == size(b)
+    @assert (t, s) == size(Q)
+    @assert (s, s) == size(R)
+    @assert (t,) == size(output_indices)
+    _zero = zero(T)
+    @simd ivdep for i = 1:s
+        @inbounds db[i] = _zero
+    end
+    @inbounds for (i, k) in enumerate(output_indices)
+        r = residuals[i]
+        @simd ivdep for j = 1:s
+            db[j] += r * dphi[j, k]
+        end
+    end
+    solve_lower_triangular!(db, R)
+    @inbounds for (i, k) in enumerate(output_indices)
+        overlap = _zero
+        for j = 1:s
+            overlap += b[j] * dphi[j, k]
+        end
+        temp[i] = overlap
+    end
+    @inbounds for i = 1:s
+        overlap = _zero
+        for j = 1:t
+            overlap += Q[j, i] * temp[j]
+        end
+        db[i] = -(db[i] + overlap)
+    end
+    solve_upper_triangular!(db, R)
+    return db
+end
+
+
 function pushforward_dresiduals!(
     dresiduals::AbstractVector{T},
     db::AbstractVector{T}, b::AbstractVector{T},
@@ -529,11 +609,10 @@ function solve_lower_triangular!(
         if iszero(L[i, i])
             b[i] = _zero
         else
-            overlap = _zero
-            for j = 1:i-1
-                overlap += L[i, j] * b[j]
+            b[i] *= L[i, i]
+            for j = i+1:s
+                b[j] -= L[j, i] * b[i]
             end
-            b[i] = L[i, i] * (b[i] - overlap)
         end
     end
     return b
