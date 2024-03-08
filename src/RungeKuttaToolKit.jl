@@ -298,9 +298,6 @@ function pushforward_db!(
     @assert (s, s) == size(R)
     @assert (t,) == size(output_indices)
     _zero = zero(T)
-    @simd ivdep for i = 1:s
-        @inbounds db[i] = _zero
-    end
     @inbounds for (i, k) in enumerate(output_indices)
         overlap = _zero
         for j = 1:s
@@ -313,7 +310,7 @@ function pushforward_db!(
         for j = 1:t
             overlap += Q[j, i] * temp[j]
         end
-        db[i] = -(db[i] + overlap)
+        db[i] = -overlap
     end
     solve_upper_triangular!(db, R)
     return db
