@@ -216,7 +216,7 @@ function compute_residuals!(
 end
 
 
-function compute_residuals!(
+function compute_residuals_and_b!(
     residuals::AbstractVector{T}, b::AbstractVector{T},
     Q::AbstractMatrix{T}, inv_gamma::AbstractVector{T}
 ) where {T}
@@ -501,6 +501,7 @@ function solve_upper_triangular!(
 ) where {T}
     s = length(b)
     @assert (s, s) == size(R)
+    # NOTE: R is stored transposed, and its diagonal is stored inverted.
     _zero = zero(T)
     @inbounds for i = s:-1:1
         if iszero(R[i, i])
@@ -511,6 +512,28 @@ function solve_upper_triangular!(
                 overlap += R[j, i] * b[j]
             end
             b[i] = R[i, i] * (b[i] - overlap)
+        end
+    end
+    return b
+end
+
+
+function solve_lower_triangular!(
+    b::AbstractVector{T}, L::AbstractMatrix{T}
+) where {T}
+    s = length(b)
+    @assert (s, s) == size(L)
+    # NOTE: The diagonal of L is stored inverted.
+    _zero = zero(T)
+    @inbounds for i = 1:s
+        if iszero(L[i, i])
+            b[i] = _zero
+        else
+            overlap = _zero
+            for j = 1:i-1
+                overlap += L[i, j] * b[j]
+            end
+            b[i] = L[i, i] * (b[i] - overlap)
         end
     end
     return b
@@ -829,7 +852,7 @@ function (adj::RKOCEvaluatorAEAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
     compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
     populate_Q!(adj.ev.Q, adj.ev.phi, adj.ev.table.output_indices)
     gram_schmidt_qr!(adj.ev.Q, adj.ev.R)
-    compute_residuals!(adj.ev.residuals, adj.ev.b,
+    compute_residuals_and_b!(adj.ev.residuals, adj.ev.b,
         adj.ev.Q, adj.ev.inv_gamma)
     solve_upper_triangular!(adj.ev.b, adj.ev.R)
     pullback_dphi_from_residual!(adj.ev.dphi,
@@ -849,7 +872,7 @@ function (adj::RKOCEvaluatorAIAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
     compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
     populate_Q!(adj.ev.Q, adj.ev.phi, adj.ev.table.output_indices)
     gram_schmidt_qr!(adj.ev.Q, adj.ev.R)
-    compute_residuals!(adj.ev.residuals, adj.ev.b,
+    compute_residuals_and_b!(adj.ev.residuals, adj.ev.b,
         adj.ev.Q, adj.ev.inv_gamma)
     solve_upper_triangular!(adj.ev.b, adj.ev.R)
     pullback_dphi_from_residual!(adj.ev.dphi,
