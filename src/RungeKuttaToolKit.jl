@@ -1036,9 +1036,9 @@ end
 
 
 @inline (ev::RKOCResidualEvaluatorAE{T})(x::Vector{T}) where {T} =
-    ev(similar(ev.residuals), x)
+    ev(Vector{T}(undef, length(ev.table.output_indices)), x)
 @inline (ev::RKOCResidualEvaluatorBE{T})(x::Vector{T}) where {T} =
-    ev(similar(ev.residuals), x)
+    ev(Vector{T}(undef, length(ev.table.output_indices)), x)
 
 
 struct RKOCEvaluatorAEAdjoint{T}
