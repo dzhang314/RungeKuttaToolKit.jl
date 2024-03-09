@@ -89,13 +89,10 @@ end
 struct RKOCResidualEvaluatorBE{T}
     table::ButcherInstructionTable
     A::Matrix{T}
-    dA::Matrix{T}
     b::Vector{T}
-    db::Vector{T}
     phi::Matrix{T}
     dphi::Matrix{T}
     inv_gamma::Vector{T}
-    residuals::Vector{T}
 end
 
 
@@ -170,12 +167,10 @@ function RKOCResidualEvaluatorBE{T}(
 ) where {T}
     table = ButcherInstructionTable(trees)
     return RKOCResidualEvaluatorBE{T}(table,
-        Matrix{T}(undef, s, s), Matrix{T}(undef, s, s),
-        Vector{T}(undef, s), Vector{T}(undef, s),
+        Matrix{T}(undef, s, s), Vector{T}(undef, s),
         Matrix{T}(undef, s, length(table.instructions)),
         Matrix{T}(undef, s, length(table.instructions)),
-        [inv(T(butcher_density(tree))) for tree in trees],
-        Vector{T}(undef, length(trees)))
+        [inv(T(butcher_density(tree))) for tree in trees])
 end
 
 
@@ -306,7 +301,7 @@ end
 
 function pushforward_dphi!(
     dphi::AbstractMatrix{T}, phi::AbstractMatrix{T},
-    dA::AbstractMatrix{T}, A::AbstractMatrix{T},
+    A::AbstractMatrix{T}, dA::AbstractMatrix{T},
     instructions::Vector{ButcherInstruction}
 ) where {T}
     @assert size(dphi) == size(phi)
@@ -331,6 +326,44 @@ function pushforward_dphi!(
                 dtemp = dphi[i, p]
                 @simd ivdep for j = 1:s
                     dphi[j, k] += dtemp * A[j, i] + temp * dA[j, i]
+                end
+            end
+        else
+            @simd ivdep for j = 1:s
+                dphi[j, k] = dphi[j, p] * phi[j, q] + phi[j, p] * dphi[j, q]
+            end
+        end
+    end
+    return dphi
+end
+
+
+function pushforward_dphi!(
+    dphi::AbstractMatrix{T}, phi::AbstractMatrix{T},
+    A::AbstractMatrix{T}, u::Int, v::Int,
+    instructions::Vector{ButcherInstruction}
+) where {T}
+    @assert size(dphi) == size(phi)
+    s = size(dphi, 1)
+    @assert (s, s) == size(A)
+    @assert size(dphi, 2) == length(instructions)
+    _zero = zero(T)
+    @inbounds for (k, instruction) in enumerate(instructions)
+        p, q = instruction.left, instruction.right
+        if p == -1
+            @assert q == -1
+            @simd ivdep for j = 1:s
+                dphi[j, k] = _zero
+            end
+        elseif q == -1
+            @simd ivdep for j = 1:s
+                dphi[j, k] = _zero
+            end
+            dphi[u, k] = phi[v, p]
+            for i = 1:s
+                dtemp = dphi[i, p]
+                @simd ivdep for j = 1:s
+                    dphi[j, k] += dtemp * A[j, i]
                 end
             end
         else
@@ -417,6 +450,27 @@ function pushforward_db!(
     end
     solve_upper_triangular!(db, R)
     return db
+end
+
+
+function pushforward_dresiduals!(
+    dresiduals::AbstractVector{T},
+    b::AbstractVector{T}, dphi::AbstractMatrix{T},
+    output_indices::AbstractVector{Int}
+) where {T}
+    t = length(dresiduals)
+    s = length(b)
+    @assert s == size(dphi, 1)
+    @assert (t,) == size(output_indices)
+    _zero = zero(T)
+    @inbounds for (i, k) in enumerate(output_indices)
+        doverlap = _zero
+        for j = 1:s
+            doverlap += b[j] * dphi[j, k]
+        end
+        dresiduals[i] = doverlap
+    end
+    return dresiduals
 end
 
 
@@ -1099,6 +1153,34 @@ function (adj::RKOCEvaluatorBIAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
 end
 
 
+function (adj::RKOCResidualEvaluatorBEAdjoint{T})(
+    jacobian::Matrix{T}, x::Vector{T}
+) where {T}
+    @assert length(adj.ev.table.output_indices) == size(jacobian, 1)
+    @assert length(x) == size(jacobian, 2)
+    reshape_explicit!(adj.ev.A, adj.ev.b, x)
+    compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
+    s = length(adj.ev.b)
+    k = 1
+    for i = 2:s
+        for j = 1:i-1
+            pushforward_dphi!(adj.ev.dphi,
+                adj.ev.phi, adj.ev.A, i, j, adj.ev.table.instructions)
+            pushforward_dresiduals!(view(jacobian, :, k),
+                adj.ev.b, adj.ev.dphi, adj.ev.table.output_indices)
+            k += 1
+        end
+    end
+    for j = 1:s
+        for (i, m) in enumerate(adj.ev.table.output_indices)
+            @inbounds jacobian[i, k] = adj.ev.phi[j, m]
+        end
+        k += 1
+    end
+    return jacobian
+end
+
+
 @inline (adj::RKOCEvaluatorAEAdjoint{T})(x::Vector{T}) where {T} =
     adj(similar(x), x)
 @inline (adj::RKOCEvaluatorAIAdjoint{T})(x::Vector{T}) where {T} =
@@ -1107,6 +1189,8 @@ end
     adj(similar(x), x)
 @inline (adj::RKOCEvaluatorBIAdjoint{T})(x::Vector{T}) where {T} =
     adj(similar(x), x)
+@inline (adj::RKOCResidualEvaluatorBEAdjoint{T})(x::Vector{T}) where {T} =
+    adj(Matrix{T}(undef, length(adj.ev.table.output_indices), length(x)), x)
 
 
 function (adj::RKOCResidualEvaluatorAEAdjoint{T})(x::Vector{T}) where {T}
@@ -1126,36 +1210,12 @@ function (adj::RKOCResidualEvaluatorAEAdjoint{T})(x::Vector{T}) where {T}
         dx[i] = _one
         reshape_explicit!(adj.ev.dA, dx)
         pushforward_dphi!(adj.ev.dphi,
-            adj.ev.phi, adj.ev.dA, adj.ev.A, adj.ev.table.instructions)
+            adj.ev.phi, adj.ev.A, adj.ev.dA, adj.ev.table.instructions)
         column = view(jacobian, :, i)
         pushforward_db!(adj.ev.db, column,
             adj.ev.residuals, adj.ev.dphi, adj.ev.b, adj.ev.Q, adj.ev.R,
             adj.ev.table.output_indices)
         pushforward_dresiduals!(column,
-            adj.ev.db, adj.ev.b, adj.ev.dphi, adj.ev.phi,
-            adj.ev.table.output_indices)
-        dx[i] = _zero
-    end
-    return jacobian
-end
-
-
-function (adj::RKOCResidualEvaluatorBEAdjoint{T})(x::Vector{T}) where {T}
-    reshape_explicit!(adj.ev.A, adj.ev.b, x)
-    compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
-    compute_residuals!(adj.ev.residuals,
-        adj.ev.b, adj.ev.phi, adj.ev.inv_gamma, adj.ev.table.output_indices)
-
-    dx = zero(x)
-    jacobian = Matrix{T}(undef, length(adj.ev.residuals), length(dx))
-    _one = one(T)
-    for i in eachindex(dx)
-        _zero = dx[i]
-        dx[i] = _one
-        reshape_explicit!(adj.ev.dA, adj.ev.db, dx)
-        pushforward_dphi!(adj.ev.dphi,
-            adj.ev.phi, adj.ev.dA, adj.ev.A, adj.ev.table.instructions)
-        pushforward_dresiduals!(view(jacobian, :, i),
             adj.ev.db, adj.ev.b, adj.ev.dphi, adj.ev.phi,
             adj.ev.table.output_indices)
         dx[i] = _zero
