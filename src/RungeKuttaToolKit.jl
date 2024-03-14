@@ -74,7 +74,6 @@ end
 struct RKOCResidualEvaluatorAE{T}
     table::ButcherInstructionTable
     A::Matrix{T}
-    dA::Matrix{T}
     b::Vector{T}
     db::Vector{T}
     phi::Matrix{T}
@@ -151,8 +150,7 @@ function RKOCResidualEvaluatorAE{T}(
 ) where {T}
     table = ButcherInstructionTable(trees)
     return RKOCResidualEvaluatorAE{T}(table,
-        Matrix{T}(undef, s, s), Matrix{T}(undef, s, s),
-        Vector{T}(undef, s), Vector{T}(undef, s),
+        Matrix{T}(undef, s, s), Vector{T}(undef, s), Vector{T}(undef, s),
         Matrix{T}(undef, s, length(table.instructions)),
         Matrix{T}(undef, s, length(table.instructions)),
         Matrix{T}(undef, length(trees), s),
@@ -182,6 +180,10 @@ end
     RKOCEvaluatorBE{T}(all_rooted_trees(p), s)
 @inline RKOCEvaluatorBI{T}(p::Int, s::Int) where {T} =
     RKOCEvaluatorBI{T}(all_rooted_trees(p), s)
+@inline RKOCResidualEvaluatorAE{T}(p::Int, s::Int) where {T} =
+    RKOCResidualEvaluatorAE{T}(all_rooted_trees(p), s)
+@inline RKOCResidualEvaluatorBE{T}(p::Int, s::Int) where {T} =
+    RKOCResidualEvaluatorBE{T}(all_rooted_trees(p), s)
 
 
 ################################################### PHI AND RESIDUAL COMPUTATION
@@ -888,65 +890,6 @@ function reshape_implicit!(
 end
 
 
-function test_reshape_operators()
-    let
-        A, b = reshape_explicit!(
-            Matrix{BigFloat}(undef, 3, 3),
-            Vector{BigFloat}(undef, 3),
-            BigFloat[1, 2, 3, 4, 5, 6])
-        @assert A == BigFloat[0 0 0; 1 0 0; 2 3 0]
-        @assert b == BigFloat[4, 5, 6]
-    end
-    let
-        x = reshape_explicit!(
-            Vector{BigFloat}(undef, 6),
-            BigFloat[0 0 0; 1 0 0; 2 3 0],
-            BigFloat[4, 5, 6])
-        @assert x == BigFloat[1, 2, 3, 4, 5, 6]
-    end
-    let
-        A = reshape_explicit!(
-            Matrix{BigFloat}(undef, 3, 3),
-            BigFloat[1, 2, 3])
-        @assert A == BigFloat[0 0 0; 1 0 0; 2 3 0]
-    end
-    let
-        x = reshape_explicit!(
-            Vector{BigFloat}(undef, 3),
-            BigFloat[0 0 0; 1 0 0; 2 3 0])
-        @assert x == BigFloat[1, 2, 3]
-    end
-    let
-        A, b = reshape_implicit!(
-            Matrix{BigFloat}(undef, 3, 3),
-            Vector{BigFloat}(undef, 3),
-            BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
-        @assert A == BigFloat[1 2 3; 4 5 6; 7 8 9]
-        @assert b == BigFloat[10, 11, 12]
-    end
-    let
-        x = reshape_implicit!(
-            Vector{BigFloat}(undef, 12),
-            BigFloat[1 2 3; 4 5 6; 7 8 9],
-            BigFloat[10, 11, 12])
-        @assert x == BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
-    end
-    let
-        A = reshape_implicit!(
-            Matrix{BigFloat}(undef, 3, 3),
-            BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9])
-        @assert A == BigFloat[1 2 3; 4 5 6; 7 8 9]
-    end
-    let
-        x = reshape_implicit!(
-            Vector{BigFloat}(undef, 9),
-            BigFloat[1 2 3; 4 5 6; 7 8 9])
-        @assert x == BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9]
-    end
-    return true
-end
-
-
 ############################################################## FUNCTOR INTERFACE
 
 
@@ -1153,6 +1096,38 @@ function (adj::RKOCEvaluatorBIAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
 end
 
 
+function (adj::RKOCResidualEvaluatorAEAdjoint{T})(
+    jacobian::Matrix{T}, x::Vector{T}
+) where {T}
+    @assert length(adj.ev.table.output_indices) == size(jacobian, 1)
+    @assert length(x) == size(jacobian, 2)
+    reshape_explicit!(adj.ev.A, x)
+    compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
+    populate_Q!(adj.ev.Q, adj.ev.phi, adj.ev.table.output_indices)
+    gram_schmidt_qr!(adj.ev.Q, adj.ev.R)
+    compute_residuals_and_b!(adj.ev.residuals, adj.ev.b,
+        adj.ev.Q, adj.ev.inv_gamma)
+    solve_upper_triangular!(adj.ev.b, adj.ev.R)
+    s = length(adj.ev.b)
+    k = 1
+    for i = 2:s
+        for j = 1:i-1
+            pushforward_dphi!(adj.ev.dphi,
+                adj.ev.phi, adj.ev.A, i, j, adj.ev.table.instructions)
+            column = view(jacobian, :, k)
+            pushforward_db!(adj.ev.db, column,
+                adj.ev.residuals, adj.ev.dphi, adj.ev.b, adj.ev.Q, adj.ev.R,
+                adj.ev.table.output_indices)
+            pushforward_dresiduals!(column,
+                adj.ev.db, adj.ev.b, adj.ev.dphi, adj.ev.phi,
+                adj.ev.table.output_indices)
+            k += 1
+        end
+    end
+    return jacobian
+end
+
+
 function (adj::RKOCResidualEvaluatorBEAdjoint{T})(
     jacobian::Matrix{T}, x::Vector{T}
 ) where {T}
@@ -1189,75 +1164,10 @@ end
     adj(similar(x), x)
 @inline (adj::RKOCEvaluatorBIAdjoint{T})(x::Vector{T}) where {T} =
     adj(similar(x), x)
+@inline (adj::RKOCResidualEvaluatorAEAdjoint{T})(x::Vector{T}) where {T} =
+    adj(Matrix{T}(undef, length(adj.ev.table.output_indices), length(x)), x)
 @inline (adj::RKOCResidualEvaluatorBEAdjoint{T})(x::Vector{T}) where {T} =
     adj(Matrix{T}(undef, length(adj.ev.table.output_indices), length(x)), x)
-
-
-function (adj::RKOCResidualEvaluatorAEAdjoint{T})(x::Vector{T}) where {T}
-    reshape_explicit!(adj.ev.A, x)
-    compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
-    populate_Q!(adj.ev.Q, adj.ev.phi, adj.ev.table.output_indices)
-    gram_schmidt_qr!(adj.ev.Q, adj.ev.R)
-    compute_residuals_and_b!(adj.ev.residuals, adj.ev.b,
-        adj.ev.Q, adj.ev.inv_gamma)
-    solve_upper_triangular!(adj.ev.b, adj.ev.R)
-
-    dx = zero(x)
-    jacobian = Matrix{T}(undef, length(adj.ev.residuals), length(dx))
-    _one = one(T)
-    for i in eachindex(dx)
-        _zero = dx[i]
-        dx[i] = _one
-        reshape_explicit!(adj.ev.dA, dx)
-        pushforward_dphi!(adj.ev.dphi,
-            adj.ev.phi, adj.ev.A, adj.ev.dA, adj.ev.table.instructions)
-        column = view(jacobian, :, i)
-        pushforward_db!(adj.ev.db, column,
-            adj.ev.residuals, adj.ev.dphi, adj.ev.b, adj.ev.Q, adj.ev.R,
-            adj.ev.table.output_indices)
-        pushforward_dresiduals!(column,
-            adj.ev.db, adj.ev.b, adj.ev.dphi, adj.ev.phi,
-            adj.ev.table.output_indices)
-        dx[i] = _zero
-    end
-    return jacobian
-end
-
-
-function test_functors(::Type{T}) where {T}
-    _zero = zero(T)
-    _one = one(T)
-    _two = _one + _one
-    _half = inv(_two)
-    _three = _two + _one
-    _third = inv(_three)
-    _six = _three + _three
-    _sixth = inv(_six)
-    ev_ae = RKOCEvaluatorAE{T}(4, 4)
-    ev_be = RKOCEvaluatorBE{T}(4, 4)
-    ev_ai = RKOCEvaluatorAI{T}(4, 4)
-    ev_bi = RKOCEvaluatorBI{T}(4, 4)
-    x_ae = [_half, _zero, _half, _zero, _zero, _one]
-    x_be = [_half, _zero, _half, _zero, _zero, _one,
-        _sixth, _third, _third, _sixth]
-    x_ai = [_zero, _zero, _zero, _zero, _half, _zero, _zero, _zero,
-        _zero, _half, _zero, _zero, _zero, _zero, _one, _zero]
-    x_bi = [_zero, _zero, _zero, _zero, _half, _zero, _zero, _zero,
-        _zero, _half, _zero, _zero, _zero, _zero, _one, _zero,
-        _sixth, _third, _third, _sixth]
-    _eps = eps(T)
-    _eps += _eps
-    _eps_squared = _eps * _eps
-    @assert abs(ev_ae(x_ae)) < _eps_squared
-    @assert abs(ev_be(x_be)) < _eps_squared
-    @assert abs(ev_ai(x_ai)) < _eps_squared
-    @assert abs(ev_bi(x_bi)) < _eps_squared
-    @assert all(abs.(ev_ae'(x_ae)) .< _eps)
-    @assert all(abs.(ev_be'(x_be)) .< _eps)
-    @assert all(abs.(ev_ai'(x_ai)) .< _eps)
-    @assert all(abs.(ev_bi'(x_bi)) .< _eps)
-    return true
-end
 
 
 end # module RungeKuttaToolKit
