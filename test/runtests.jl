@@ -165,6 +165,23 @@ end
 ################################################################################
 
 
+using MultiFloats: Float64x1, Float64x2, Float64x3, Float64x4
+using MultiFloats: Float64x5, Float64x6, Float64x7, Float64x8
+
+
+@testset "RKOC Evaluators (Float64x1)" test_evaluators_rk4(Float64x1)
+@testset "RKOC Evaluators (Float64x2)" test_evaluators_rk4(Float64x2)
+@testset "RKOC Evaluators (Float64x3)" test_evaluators_rk4(Float64x3)
+@testset "RKOC Evaluators (Float64x4)" test_evaluators_rk4(Float64x4)
+@testset "RKOC Evaluators (Float64x5)" test_evaluators_rk4(Float64x5)
+@testset "RKOC Evaluators (Float64x6)" test_evaluators_rk4(Float64x6)
+@testset "RKOC Evaluators (Float64x7)" test_evaluators_rk4(Float64x7)
+@testset "RKOC Evaluators (Float64x8)" test_evaluators_rk4(Float64x8)
+
+
+################################################################################
+
+
 using RungeKuttaToolKit: RKOCResidualEvaluatorAE, RKOCResidualEvaluatorBE
 
 
@@ -243,20 +260,6 @@ end
 
 
 ################################################################################
-
-
-using MultiFloats: Float64x1, Float64x2, Float64x3, Float64x4
-using MultiFloats: Float64x5, Float64x6, Float64x7, Float64x8
-
-
-@testset "RKOC Evaluators (Float64x1)" test_evaluators_rk4(Float64x1)
-@testset "RKOC Evaluators (Float64x2)" test_evaluators_rk4(Float64x2)
-@testset "RKOC Evaluators (Float64x3)" test_evaluators_rk4(Float64x3)
-@testset "RKOC Evaluators (Float64x4)" test_evaluators_rk4(Float64x4)
-@testset "RKOC Evaluators (Float64x5)" test_evaluators_rk4(Float64x5)
-@testset "RKOC Evaluators (Float64x6)" test_evaluators_rk4(Float64x6)
-@testset "RKOC Evaluators (Float64x7)" test_evaluators_rk4(Float64x7)
-@testset "RKOC Evaluators (Float64x8)" test_evaluators_rk4(Float64x8)
 
 
 @testset "RKOC Residual Evaluators (Float64x1)" test_residual_evaluators_rk4(Float64x1)
