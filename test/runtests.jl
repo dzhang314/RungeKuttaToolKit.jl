@@ -45,6 +45,47 @@ end
 ################################################################################
 
 
+using RungeKuttaToolKit: reshape_diagonally_implicit!
+
+
+@testset "reshape_diagonally_implicit!(A, b, x)" begin
+    A, b = reshape_diagonally_implicit!(
+        Matrix{BigFloat}(undef, 3, 3),
+        Vector{BigFloat}(undef, 3),
+        BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9])
+    @test A == BigFloat[1 0 0; 2 3 0; 4 5 6]
+    @test b == BigFloat[7, 8, 9]
+end
+
+
+@testset "reshape_diagonally_implicit!(x, A, b)" begin
+    x = reshape_diagonally_implicit!(
+        Vector{BigFloat}(undef, 9),
+        BigFloat[1 0 0; 2 3 0; 4 5 6],
+        BigFloat[7, 8, 9])
+    @test x == BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9]
+end
+
+
+@testset "reshape_diagonally_implicit!(A, x)" begin
+    A = reshape_diagonally_implicit!(
+        Matrix{BigFloat}(undef, 3, 3),
+        BigFloat[1, 2, 3, 4, 5, 6])
+    @test A == BigFloat[1 0 0; 2 3 0; 4 5 6]
+end
+
+
+@testset "reshape_diagonally_implicit!(x, A)" begin
+    x = reshape_diagonally_implicit!(
+        Vector{BigFloat}(undef, 6),
+        BigFloat[1 0 0; 2 3 0; 4 5 6])
+    @test x == BigFloat[1, 2, 3, 4, 5, 6]
+end
+
+
+################################################################################
+
+
 using RungeKuttaToolKit: reshape_implicit!
 
 
@@ -87,6 +128,7 @@ end
 
 
 using RungeKuttaToolKit: RKOCEvaluatorAE, RKOCEvaluatorBE
+using RungeKuttaToolKit: RKOCEvaluatorAD, RKOCEvaluatorBD
 using RungeKuttaToolKit: RKOCEvaluatorAI, RKOCEvaluatorBI
 
 
@@ -108,6 +150,10 @@ function test_evaluators_rk4(::Type{T}) where {T}
     x_ae = [_half, _zero, _half, _zero, _zero, _one]
     x_be = [_half, _zero, _half, _zero, _zero, _one,
         _sixth, _third, _third, _sixth]
+    x_ad = [_zero, _half, _zero, _zero, _half, _zero,
+        _zero, _zero, _one, _zero]
+    x_bd = [_zero, _half, _zero, _zero, _half, _zero,
+        _zero, _zero, _one, _zero, _sixth, _third, _third, _sixth]
     x_ai = [_zero, _zero, _zero, _zero, _half, _zero, _zero, _zero,
         _zero, _half, _zero, _zero, _zero, _zero, _one, _zero]
     x_bi = [_zero, _zero, _zero, _zero, _half, _zero, _zero, _zero,
@@ -116,6 +162,8 @@ function test_evaluators_rk4(::Type{T}) where {T}
 
     ev_ae = RKOCEvaluatorAE{T}(4, 4)
     ev_be = RKOCEvaluatorBE{T}(4, 4)
+    ev_ad = RKOCEvaluatorAD{T}(4, 4)
+    ev_bd = RKOCEvaluatorBD{T}(4, 4)
     ev_ai = RKOCEvaluatorAI{T}(4, 4)
     ev_bi = RKOCEvaluatorBI{T}(4, 4)
 
@@ -125,6 +173,8 @@ function test_evaluators_rk4(::Type{T}) where {T}
 
     @test abs(ev_ae(x_ae)) < _eps_squared
     @test abs(ev_be(x_be)) < _eps_squared
+    @test abs(ev_ad(x_ad)) < _eps_squared
+    @test abs(ev_bd(x_bd)) < _eps_squared
     @test abs(ev_ai(x_ai)) < _eps_squared
     @test abs(ev_bi(x_bi)) < _eps_squared
 
@@ -135,11 +185,15 @@ function test_evaluators_rk4(::Type{T}) where {T}
 
     @test phi == ev_ae.phi
     @test phi == ev_be.phi
+    @test phi == ev_ad.phi
+    @test phi == ev_bd.phi
     @test phi == ev_ai.phi
     @test phi == ev_bi.phi
 
     @test all(abs(g) < _eps for g in ev_ae'(x_ae))
     @test all(abs(g) < _twice_eps for g in ev_be'(x_be))
+    @test all(abs(g) < _eps for g in ev_ad'(x_ad))
+    @test all(abs(g) < _twice_eps for g in ev_bd'(x_bd))
     @test all(abs(g) < _eps for g in ev_ai'(x_ai))
     @test all(abs(g) < _twice_eps for g in ev_bi'(x_bi))
 
@@ -147,6 +201,11 @@ function test_evaluators_rk4(::Type{T}) where {T}
     @test abs(ev_ae.b[2] - _third) < _eps
     @test abs(ev_ae.b[3] - _third) < _eps
     @test abs(ev_ae.b[4] - _sixth) < _eps
+
+    @test abs(ev_ad.b[1] - _sixth) < _eps
+    @test abs(ev_ad.b[2] - _third) < _eps
+    @test abs(ev_ad.b[3] - _third) < _eps
+    @test abs(ev_ad.b[4] - _sixth) < _eps
 
     @test abs(ev_ai.b[1] - _sixth) < _eps
     @test abs(ev_ai.b[2] - _third) < _eps
@@ -183,6 +242,8 @@ using MultiFloats: Float64x5, Float64x6, Float64x7, Float64x8
 
 
 using RungeKuttaToolKit: RKOCResidualEvaluatorAE, RKOCResidualEvaluatorBE
+using RungeKuttaToolKit: RKOCResidualEvaluatorAD, RKOCResidualEvaluatorBD
+using RungeKuttaToolKit: RKOCResidualEvaluatorAI, RKOCResidualEvaluatorBI
 
 
 function test_residual_evaluators_rk4(::Type{T}) where {T}
@@ -203,9 +264,22 @@ function test_residual_evaluators_rk4(::Type{T}) where {T}
     x_ae = [_half, _zero, _half, _zero, _zero, _one]
     x_be = [_half, _zero, _half, _zero, _zero, _one,
         _sixth, _third, _third, _sixth]
+    x_ad = [_zero, _half, _zero, _zero, _half, _zero,
+        _zero, _zero, _one, _zero]
+    x_bd = [_zero, _half, _zero, _zero, _half, _zero,
+        _zero, _zero, _one, _zero, _sixth, _third, _third, _sixth]
+    x_ai = [_zero, _zero, _zero, _zero, _half, _zero, _zero, _zero,
+        _zero, _half, _zero, _zero, _zero, _zero, _one, _zero]
+    x_bi = [_zero, _zero, _zero, _zero, _half, _zero, _zero, _zero,
+        _zero, _half, _zero, _zero, _zero, _zero, _one, _zero,
+        _sixth, _third, _third, _sixth]
 
     rev_ae = RKOCResidualEvaluatorAE{T}(4, 4)
     rev_be = RKOCResidualEvaluatorBE{T}(4, 4)
+    rev_ad = RKOCResidualEvaluatorAD{T}(4, 4)
+    rev_bd = RKOCResidualEvaluatorBD{T}(4, 4)
+    rev_ai = RKOCResidualEvaluatorAI{T}(4, 4)
+    rev_bi = RKOCResidualEvaluatorBI{T}(4, 4)
 
     _eps = eps(T)
     _sqrt_eps = sqrt(_eps)
@@ -213,6 +287,10 @@ function test_residual_evaluators_rk4(::Type{T}) where {T}
 
     @test all(abs(r) < _eps for r in rev_ae(x_ae))
     @test all(abs(r) < _eps for r in rev_be(x_be))
+    @test all(abs(r) < _eps for r in rev_ad(x_ad))
+    @test all(abs(r) < _eps for r in rev_bd(x_bd))
+    @test all(abs(r) < _eps for r in rev_ai(x_ai))
+    @test all(abs(r) < _eps for r in rev_bi(x_bi))
 
     phi = [_one _zero _zero _zero _zero _zero _zero _zero;
         _one _half _zero _fourth _zero _zero _zero _eighth;
@@ -221,11 +299,15 @@ function test_residual_evaluators_rk4(::Type{T}) where {T}
 
     @test phi == rev_ae.phi
     @test phi == rev_be.phi
+    @test phi == rev_ad.phi
+    @test phi == rev_bd.phi
+    @test phi == rev_ai.phi
+    @test phi == rev_bi.phi
 
     # TODO: Investigate what goes wrong here for Float64x7 and Float64x8.
     # I suspect that there is underflow in the least significant components.
     if (T != Float64x7) && (T != Float64x8)
-        njac_ae = Matrix{T}(undef, 8, 6)
+        njac_ae = Matrix{T}(undef, 8, length(x_ae))
         for i in eachindex(x_ae)
             x_old = x_ae[i]
             x_ae[i] = x_old + _sqrt_eps
@@ -236,9 +318,33 @@ function test_residual_evaluators_rk4(::Type{T}) where {T}
             njac_ae[:, i] = (r_pos - r_neg) / _twice_sqrt_eps
         end
         @test all(abs(d) < _sqrt_eps for d in rev_ae'(x_ae) - njac_ae)
+
+        njac_ad = Matrix{T}(undef, 8, length(x_ad))
+        for i in eachindex(x_ad)
+            x_old = x_ad[i]
+            x_ad[i] = x_old + _sqrt_eps
+            r_pos = rev_ad(x_ad)
+            x_ad[i] = x_old - _sqrt_eps
+            r_neg = rev_ad(x_ad)
+            x_ad[i] = x_old
+            njac_ad[:, i] = (r_pos - r_neg) / _twice_sqrt_eps
+        end
+        @test all(abs(d) < _sqrt_eps for d in rev_ad'(x_ad) - njac_ad)
+
+        njac_ai = Matrix{T}(undef, 8, length(x_ai))
+        for i in eachindex(x_ai)
+            x_old = x_ai[i]
+            x_ai[i] = x_old + _sqrt_eps
+            r_pos = rev_ai(x_ai)
+            x_ai[i] = x_old - _sqrt_eps
+            r_neg = rev_ai(x_ai)
+            x_ai[i] = x_old
+            njac_ai[:, i] = (r_pos - r_neg) / _twice_sqrt_eps
+        end
+        @test all(abs(d) < _sqrt_eps for d in rev_ai'(x_ai) - njac_ai)
     end
 
-    njac_be = Matrix{T}(undef, 8, 10)
+    njac_be = Matrix{T}(undef, 8, length(x_be))
     for i in eachindex(x_be)
         x_old = x_be[i]
         x_be[i] = x_old + _sqrt_eps
@@ -249,6 +355,30 @@ function test_residual_evaluators_rk4(::Type{T}) where {T}
         njac_be[:, i] = (r_pos - r_neg) / _twice_sqrt_eps
     end
     @test all(abs(d) < _sqrt_eps for d in rev_be'(x_be) - njac_be)
+
+    njac_bd = Matrix{T}(undef, 8, length(x_bd))
+    for i in eachindex(x_bd)
+        x_old = x_bd[i]
+        x_bd[i] = x_old + _sqrt_eps
+        r_pos = rev_bd(x_bd)
+        x_bd[i] = x_old - _sqrt_eps
+        r_neg = rev_bd(x_bd)
+        x_bd[i] = x_old
+        njac_bd[:, i] = (r_pos - r_neg) / _twice_sqrt_eps
+    end
+    @test all(abs(d) < _sqrt_eps for d in rev_bd'(x_bd) - njac_bd)
+
+    njac_bi = Matrix{T}(undef, 8, length(x_bi))
+    for i in eachindex(x_bi)
+        x_old = x_bi[i]
+        x_bi[i] = x_old + _sqrt_eps
+        r_pos = rev_bi(x_bi)
+        x_bi[i] = x_old - _sqrt_eps
+        r_neg = rev_bi(x_bi)
+        x_bi[i] = x_old
+        njac_bi[:, i] = (r_pos - r_neg) / _twice_sqrt_eps
+    end
+    @test all(abs(d) < _sqrt_eps for d in rev_bi'(x_bi) - njac_bi)
 
 end
 
