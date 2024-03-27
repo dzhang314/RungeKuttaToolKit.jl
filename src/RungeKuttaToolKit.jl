@@ -8,7 +8,8 @@ include("ButcherInstructions.jl")
 using .ButcherInstructions: LevelSequence,
     ButcherInstruction, ButcherInstructionTable,
     rooted_trees, all_rooted_trees, butcher_density, butcher_symmetry
-export rooted_trees, all_rooted_trees, butcher_density, butcher_symmetry
+export LevelSequence, ButcherInstruction, ButcherInstructionTable,
+    rooted_trees, all_rooted_trees, butcher_density, butcher_symmetry
 
 
 ###################################################### EVALUATOR DATA STRUCTURES
