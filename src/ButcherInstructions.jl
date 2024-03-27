@@ -245,8 +245,17 @@ function Base.iterate(
 end
 
 
-all_rooted_trees(n::Int) = reduce(vcat,
-    (collect(LevelSequenceIterator(i)) for i = 1:n))
+function rooted_trees(n::Int; tree_order::Symbol=:reverse_lexicographic)
+    if tree_order == :lexicographic
+        return reverse!(collect(LevelSequenceIterator(n)))
+    else
+        return collect(LevelSequenceIterator(n))
+    end
+end
+
+
+all_rooted_trees(n::Int; tree_order::Symbol=:reverse_lexicographic) =
+    reduce(vcat, rooted_trees(i; tree_order=tree_order) for i = 1:n)
 
 
 ################################################## COMBINATORICS OF ROOTED TREES

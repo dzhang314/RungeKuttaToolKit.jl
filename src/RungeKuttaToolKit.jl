@@ -7,7 +7,8 @@ using MultiFloats: MultiFloat, rsqrt
 include("ButcherInstructions.jl")
 using .ButcherInstructions: LevelSequence,
     ButcherInstruction, ButcherInstructionTable,
-    all_rooted_trees, butcher_density, butcher_symmetry
+    rooted_trees, all_rooted_trees, butcher_density, butcher_symmetry
+export rooted_trees, all_rooted_trees, butcher_density, butcher_symmetry
 
 
 ###################################################### EVALUATOR DATA STRUCTURES
