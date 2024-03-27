@@ -245,8 +245,8 @@ function Base.iterate(
 end
 
 
-function rooted_trees(n::Int; tree_order::Symbol=:reverse_lexicographic)
-    if tree_order == :lexicographic
+function rooted_trees(n::Int; tree_ordering::Symbol=:reverse_lexicographic)
+    if tree_ordering == :lexicographic
         return reverse!(collect(LevelSequenceIterator(n)))
     else
         return collect(LevelSequenceIterator(n))
@@ -254,8 +254,8 @@ function rooted_trees(n::Int; tree_order::Symbol=:reverse_lexicographic)
 end
 
 
-all_rooted_trees(n::Int; tree_order::Symbol=:reverse_lexicographic) =
-    reduce(vcat, rooted_trees(i; tree_order=tree_order) for i = 1:n)
+all_rooted_trees(n::Int; tree_ordering::Symbol=:reverse_lexicographic) =
+    reduce(vcat, rooted_trees(i; tree_ordering=tree_ordering) for i = 1:n)
 
 
 ################################################## COMBINATORICS OF ROOTED TREES
@@ -409,7 +409,7 @@ function push_necessary_subtrees!(
 end
 
 
-function tree_order(a::LevelSequence, b::LevelSequence)
+function grevlex_order(a::LevelSequence, b::LevelSequence)
     len_a = length(a)
     len_b = length(b)
     if len_a < len_b
@@ -428,7 +428,7 @@ function necessary_subtrees(trees::Vector{LevelSequence})
         result[tree] = 0
         push_necessary_subtrees!(result, tree)
     end
-    return sort!(LevelSequence.(keys(result.entries)); lt=tree_order)
+    return sort!(LevelSequence.(keys(result.entries)); lt=grevlex_order)
 end
 
 
