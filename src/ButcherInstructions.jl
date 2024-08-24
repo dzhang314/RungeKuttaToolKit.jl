@@ -435,6 +435,13 @@ function necessary_subtrees(trees::Vector{LevelSequence})
 end
 
 
+"""
+    RungeKuttaToolKit.ButcherInstructions.build_instructions(
+        trees::Vector{LevelSequence};
+        optimize::Bool=true,
+        sort_by_depth::Bool=true,
+    ) -> instructions, indices
+"""
 function build_instructions(
     trees::Vector{LevelSequence};
     optimize::Bool=true, sort_by_depth::Bool=true

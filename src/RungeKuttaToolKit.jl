@@ -74,19 +74,18 @@ end
         Phi::AbstractMatrix{T},
         A::AbstractMatrix{T},
         instructions::AbstractVector{ButcherInstruction},
-    ) where {T}
+    ) -> Phi
 
-Compute Butcher weight vectors ``\\{ \\Phi_t(A) : t \\in T \\}`` for a given
+Compute Butcher weight vectors ``\\{ \\Phi_t(A) : t \\in T \\}`` of a given
 matrix ``A`` over a set of rooted trees ``T`` represented by `instructions`.
 
 # Arguments
 - `Phi`: ``s \\times N`` output matrix. Each Butcher weight vector
-  ``\\Phi_t(A)`` is written to `Phi[:, i]`, where ``t`` is the rooted tree
-  represented by `instructions[i]`.
-- `A`: ``s \\times s`` input matrix containing the coefficients of a
-  Runge--Kutta method.
+    ``\\Phi_t(A)`` is written to `Phi[:, i]`, where ``t`` is the rooted tree
+    represented by `instructions[i]`.
+- `A`: ``s \\times s`` input matrix containing Runge--Kutta coefficients.
 - `instructions`: length ``N`` input vector of `ButcherInstruction` objects
-  encoding a set of rooted trees.
+    encoding a set of rooted trees.
 
 Here, ``s`` is the number of stages in the Runge--Kutta method represented by
 `A`, and ``N`` is the number of rooted trees in ``T``.
@@ -127,7 +126,7 @@ function compute_Phi!(
             for i in stage_indices
                 temp = Phi[i, p]
                 @simd ivdep for j in stage_indices
-                    Phi[j, k] += temp * A[j, i]
+                    Phi[j, k] += A[j, i] * temp
                 end
             end
         else
@@ -149,28 +148,29 @@ end
         b::AbstractVector{T},
         Phi::AbstractMatrix{T},
         inv_gamma::AbstractVector{T},
-        output_indices::AbstractVector{Int},
+        desired_indices::AbstractVector{Int},
     ) where {T}
 
 Compute residuals ``\\{ \\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t) :
-t \\in T \\}`` of the Runge--Kutta order conditions over a set of rooted trees
-``T`` using precomputed Butcher weight vectors and density values.
+t \\in T \\}`` of Runge--Kutta order conditions over a set of rooted trees
+``T`` using precomputed Butcher weight vectors ``\\Phi_t(A)`` and inverse
+density values ``1/\\gamma(t)``.
 
 # Arguments
 - `residuals`: length ``N_{\\text{output}}`` output vector. Each residual
-  ``\\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t)`` is written to
-  `residuals[i]`, where ``t`` is the rooted tree whose Butcher weight vector
-  is precomputed in `Phi[:, output_indices[i]]`.
-- `b`: length ``s`` input vector containing the weights of a Runge--Kutta
-  method.
+    ``\\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t)`` is written to
+    `residuals[i]`, where ``t`` is the rooted tree whose Butcher weight vector
+    is precomputed in `Phi[:, desired_indices[i]]`.
+- `b`: length ``s`` input vector containing Runge--Kutta weights.
 - `Phi`: ``s \\times N_{\\text{internal}}`` input matrix containing
-  precomputed Butcher weight vectors. `Phi` may contain additional
-  Butcher weight vectors corresponding to rooted trees not in ``T``.
+    precomputed Butcher weight vectors ``\\Phi_t(A)``. `Phi` may contain
+    additional Butcher weight vectors corresponding to rooted trees not in
+    ``T``. This is necessary when ``T`` contains a tree but not its subtrees.
 - `inv_gamma`: length ``N_{\\text{output}}`` input vector containing
-  precomputed Butcher density values ``\\{ 1/\\gamma(t) : t \\in T \\}``.
-- `output_indices`: length ``N_{\\text{output}}`` input vector of indices
-  in the range ``1:N_{\\text{internal}}`` specifying the Butcher weight
-  vectors in `Phi` corresponding to the rooted trees in ``T``.
+    precomputed Butcher density values.
+- `desired_indices`: length ``N_{\\text{output}}`` input vector of indices
+    in the range ``1:N_{\\text{internal}}`` specifying Butcher weight
+    vectors in `Phi` corresponding to rooted trees in ``T``.
 
 Here, ``s`` is the number of stages in the Runge--Kutta method represented by
 `b`, ``N_{\\text{output}}`` is the number of rooted trees in ``T``, and
@@ -181,100 +181,130 @@ function compute_residuals!(
     b::AbstractVector{T},
     Phi::AbstractMatrix{T},
     inv_gamma::AbstractVector{T},
-    output_indices::AbstractVector{Int},
+    desired_indices::AbstractVector{Int},
 ) where {T}
 
     # Validate array dimensions.
-    s = length(b)
-    num_output_trees = length(residuals)
-    @assert s == size(Phi, 1)
-    @assert (num_output_trees,) == size(inv_gamma)
-    @assert (num_output_trees,) == size(output_indices)
-    Base.require_one_based_indexing(residuals, b, Phi, inv_gamma)
+    residual_indices = axes(residuals, 1)
+    stage_indices = axes(b, 1)
+    internal_indices = axes(Phi, 2)
+    @assert axes(residuals) == (residual_indices,)
+    @assert axes(b) == (stage_indices,)
+    @assert axes(Phi) == (stage_indices, internal_indices)
+    @assert axes(inv_gamma) == (residual_indices,)
+    @assert axes(desired_indices) == (residual_indices,)
 
     # Construct numeric constants.
     _zero = zero(T)
 
     # Iterate over output indices.
-    @inbounds for (i, k) in enumerate(output_indices)
-
+    @inbounds for (i, k) in pairs(desired_indices)
+        # Compute dot product without SIMD for determinism.
         overlap = _zero
-        for j = 1:s
+        for j in stage_indices
             overlap += b[j] * Phi[j, k]
         end
+        # Subtract inv_gamma[i] at the end for improved numerical stability.
         residuals[i] = overlap - inv_gamma[i]
     end
+
     return residuals
 end
 
 
-function compute_residuals!(
-    residuals::AbstractVector{T},
-    Q::AbstractMatrix{T},
-    inv_gamma::AbstractVector{T},
-) where {T}
+# function compute_residuals!(
+#     residuals::AbstractVector{T},
+#     Q::AbstractMatrix{T},
+#     inv_gamma::AbstractVector{T},
+# ) where {T}
 
-    # Validate array dimensions.
-    t = length(residuals)
-    s = size(Q, 2)
-    @assert t == size(Q, 1)
-    @assert (t,) == size(inv_gamma)
+#     # Validate array dimensions.
+#     t = length(residuals)
+#     s = size(Q, 2)
+#     @assert t == size(Q, 1)
+#     @assert (t,) == size(inv_gamma)
 
-    # Construct numeric constants.
-    _zero = zero(T)
+#     # Construct numeric constants.
+#     _zero = zero(T)
 
-    @simd ivdep for i = 1:t
-        @inbounds residuals[i] = -inv_gamma[i]
-    end
-    @inbounds for j = 1:s
-        overlap = _zero
-        for i = 1:t
-            overlap += Q[i, j] * residuals[i]
-        end
-        @simd ivdep for i = 1:t
-            residuals[i] -= overlap * Q[i, j]
-        end
-    end
-    return residuals
-end
+#     @simd ivdep for i = 1:t
+#         @inbounds residuals[i] = -inv_gamma[i]
+#     end
+#     @inbounds for j = 1:s
+#         overlap = _zero
+#         for i = 1:t
+#             overlap += Q[i, j] * residuals[i]
+#         end
+#         @simd ivdep for i = 1:t
+#             residuals[i] -= overlap * Q[i, j]
+#         end
+#     end
+#     return residuals
+# end
 
 
-function compute_residuals_and_b!(
-    residuals::AbstractVector{T},
-    b::AbstractVector{T},
-    Q::AbstractMatrix{T},
-    inv_gamma::AbstractVector{T},
-) where {T}
+# function compute_residuals_and_b!(
+#     residuals::AbstractVector{T},
+#     b::AbstractVector{T},
+#     Q::AbstractMatrix{T},
+#     inv_gamma::AbstractVector{T},
+# ) where {T}
 
-    # Validate array dimensions.
-    t = length(residuals)
-    s = length(b)
-    @assert (t, s) == size(Q)
-    @assert (t,) == size(inv_gamma)
+#     # Validate array dimensions.
+#     t = length(residuals)
+#     s = length(b)
+#     @assert (t, s) == size(Q)
+#     @assert (t,) == size(inv_gamma)
 
-    # Construct numeric constants.
-    _zero = zero(T)
+#     # Construct numeric constants.
+#     _zero = zero(T)
 
-    @simd ivdep for i = 1:t
-        @inbounds residuals[i] = -inv_gamma[i]
-    end
-    @inbounds for j = 1:s
-        overlap = _zero
-        for i = 1:t
-            overlap += Q[i, j] * residuals[i]
-        end
-        @simd ivdep for i = 1:t
-            residuals[i] -= overlap * Q[i, j]
-        end
-        b[j] = -overlap
-    end
-    return (residuals, b)
-end
+#     @simd ivdep for i = 1:t
+#         @inbounds residuals[i] = -inv_gamma[i]
+#     end
+#     @inbounds for j = 1:s
+#         overlap = _zero
+#         for i = 1:t
+#             overlap += Q[i, j] * residuals[i]
+#         end
+#         @simd ivdep for i = 1:t
+#             residuals[i] -= overlap * Q[i, j]
+#         end
+#         b[j] = -overlap
+#     end
+#     return (residuals, b)
+# end
 
 
 ############################################ GRADIENT COMPUTATION (FORWARD-MODE)
 
 
+"""
+    RungeKuttaToolKit.pushforward_dPhi!(
+        dPhi::AbstractMatrix{T},
+        Phi::AbstractMatrix{T},
+        A::AbstractMatrix{T},
+        dA::AbstractMatrix{T},
+        instructions::AbstractVector{ButcherInstruction},
+    ) where {T}
+
+Compute directional derivatives of Butcher weight vectors
+``\\{ \\nabla_{\\mathrm{d}A} \\Phi_t(A) : t \\in T \\}``
+at a given matrix ``A`` in direction ``\\mathrm{d}A``
+over a set of rooted trees ``T`` represented by `instructions`.
+
+# Arguments
+- `dPhi`: ``s \\times N`` output matrix. Each directional derivative
+    ``\\nabla_{\\mathrm{d}A} \\Phi_t(A)`` is written to `dPhi[:, i]`,
+    where ``t`` is the rooted tree represented by `instructions[i]`.
+- `Phi`: ``s \\times N`` input matrix containing precomputed
+    Butcher weight vectors ``\\Phi_t(A)``. See [`compute_Phi!`](@ref).
+- `A`: ``s \\times s`` input matrix containing Runge--Kutta coefficients.
+- `dA`: ``s \\times s`` input matrix containing derivative direction.
+- `instructions`: length ``N`` input vector of `ButcherInstruction` objects
+    encoding a set of rooted trees. See
+    [`ButcherInstructions.build_instructions`](@ref).
+"""
 function pushforward_dPhi!(
     dPhi::AbstractMatrix{T},
     Phi::AbstractMatrix{T},
@@ -282,40 +312,80 @@ function pushforward_dPhi!(
     dA::AbstractMatrix{T},
     instructions::AbstractVector{ButcherInstruction},
 ) where {T}
-    @assert size(dPhi) == size(Phi)
-    s = size(dPhi, 1)
-    @assert (s, s) == size(dA)
-    @assert (s, s) == size(A)
-    @assert size(dPhi, 2) == length(instructions)
+
+    # Validate array dimensions.
+    stage_indices = axes(dPhi, 1)
+    instruction_indices = axes(dPhi, 2)
+    @assert axes(dPhi) == (stage_indices, instruction_indices)
+    @assert axes(Phi) == (stage_indices, instruction_indices)
+    @assert axes(A) == (stage_indices, stage_indices)
+    @assert axes(dA) == (stage_indices, stage_indices)
+    @assert axes(instructions) == (instruction_indices,)
+
+    # Construct numeric constants.
     _zero = zero(T)
-    @inbounds for (k, instruction) in enumerate(instructions)
+
+    # Iterate over Butcher instructions.
+    @inbounds for (k, instruction) in pairs(instructions)
         p, q = instruction.left, instruction.right
-        if p == -1
-            @assert q == -1
-            @simd ivdep for j = 1:s
+        if p == NULL_INDEX
+            # Trivial tree; derivative is zero.
+            @assert q == NULL_INDEX
+            @simd ivdep for j in stage_indices
                 dPhi[j, k] = _zero
             end
-        elseif q == -1
-            @simd ivdep for j = 1:s
+        elseif q == NULL_INDEX
+            # Extension; apply product rule to matrix-vector product.
+            @simd ivdep for j in stage_indices
                 dPhi[j, k] = _zero
             end
-            for i = 1:s
+            for i in stage_indices
                 temp = Phi[i, p]
                 dtemp = dPhi[i, p]
-                @simd ivdep for j = 1:s
-                    dPhi[j, k] += dtemp * A[j, i] + temp * dA[j, i]
+                @simd ivdep for j in stage_indices
+                    dPhi[j, k] += dA[j, i] * temp + A[j, i] * dtemp
                 end
             end
         else
-            @simd ivdep for j = 1:s
+            # Rooted sum; apply product rule to elementwise product.
+            @simd ivdep for j in stage_indices
                 dPhi[j, k] = dPhi[j, p] * Phi[j, q] + Phi[j, p] * dPhi[j, q]
             end
         end
     end
+
     return dPhi
 end
 
 
+"""
+    RungeKuttaToolKit.pushforward_dPhi!(
+        dPhi::AbstractMatrix{T},
+        Phi::AbstractMatrix{T},
+        A::AbstractMatrix{T},
+        u::Int,
+        v::Int,
+        instructions::AbstractVector{ButcherInstruction},
+    ) where {T}
+
+Compute partial derivatives of Butcher weight vectors
+``\\{ \\partial_{A_{u,v}} \\Phi_t(A) : t \\in T \\}``
+at a given matrix ``A`` with respect to entry ``A_{u,v}``
+over a set of rooted trees ``T`` represented by `instructions`.
+
+# Arguments
+- `dPhi`: ``s \\times N`` output matrix. Each partial derivative
+    ``\\partial_{A_{u,v}} \\Phi_t(A)`` is written to `dPhi[:, i]`,
+    where ``t`` is the rooted tree represented by `instructions[i]`.
+- `Phi`: ``s \\times N`` input matrix containing precomputed
+    Butcher weight vectors ``\\Phi_t(A)``. See [`compute_Phi!`](@ref).
+- `A`: ``s \\times s`` input matrix containing Runge--Kutta coefficients.
+- `u`: row index of entry with respect to which to differentiate.
+- `v`: column index of entry with respect to which to differentiate.
+- `instructions`: length ``N`` input vector of `ButcherInstruction` objects
+    encoding a set of rooted trees. See
+    [`ButcherInstructions.build_instructions`](@ref).
+"""
 function pushforward_dPhi!(
     dPhi::AbstractMatrix{T},
     Phi::AbstractMatrix{T},
@@ -324,31 +394,44 @@ function pushforward_dPhi!(
     v::Int,
     instructions::AbstractVector{ButcherInstruction},
 ) where {T}
-    @assert size(dPhi) == size(Phi)
-    s = size(dPhi, 1)
-    @assert (s, s) == size(A)
-    @assert size(dPhi, 2) == length(instructions)
+
+    # Validate array dimensions.
+    stage_indices = axes(dPhi, 1)
+    instruction_indices = axes(dPhi, 2)
+    @assert axes(dPhi) == (stage_indices, instruction_indices)
+    @assert axes(Phi) == (stage_indices, instruction_indices)
+    @assert axes(A) == (stage_indices, stage_indices)
+    @assert u in stage_indices
+    @assert v in stage_indices
+    @assert axes(instructions) == (instruction_indices,)
+
+    # Construct numeric constants.
     _zero = zero(T)
-    @inbounds for (k, instruction) in enumerate(instructions)
+
+    # Iterate over Butcher instructions.
+    @inbounds for (k, instruction) in pairs(instructions)
         p, q = instruction.left, instruction.right
-        if p == -1
-            @assert q == -1
-            @simd ivdep for j = 1:s
+        if p == NULL_INDEX
+            # Trivial tree; derivative is zero.
+            @assert q == NULL_INDEX
+            @simd ivdep for j in stage_indices
                 dPhi[j, k] = _zero
             end
-        elseif q == -1
-            @simd ivdep for j = 1:s
+        elseif q == NULL_INDEX
+            # Extension; apply product rule to matrix-vector product.
+            @simd ivdep for j in stage_indices
                 dPhi[j, k] = _zero
             end
-            dPhi[u, k] = Phi[v, p]
-            for i = 1:s
+            dPhi[u, k] = Phi[v, p] # Additional term from product rule.
+            for i in stage_indices
                 dtemp = dPhi[i, p]
-                @simd ivdep for j = 1:s
+                @simd ivdep for j in stage_indices
                     dPhi[j, k] += dtemp * A[j, i]
                 end
             end
         else
-            @simd ivdep for j = 1:s
+            # Rooted sum; apply product rule to elementwise product.
+            @simd ivdep for j in stage_indices
                 dPhi[j, k] = dPhi[j, p] * Phi[j, q] + Phi[j, p] * dPhi[j, q]
             end
         end
@@ -357,88 +440,88 @@ function pushforward_dPhi!(
 end
 
 
-function pushforward_db!(
-    db::AbstractVector{T},
-    temp::AbstractVector{T},
-    dPhi::AbstractMatrix{T},
-    b::AbstractVector{T},
-    Q::AbstractMatrix{T},
-    R::AbstractMatrix{T},
-    output_indices::AbstractVector{Int},
-) where {T}
-    s = length(db)
-    t = length(temp)
-    @assert s == size(dPhi, 1)
-    @assert (s,) == size(b)
-    @assert (t, s) == size(Q)
-    @assert (s, s) == size(R)
-    @assert (t,) == size(output_indices)
-    _zero = zero(T)
-    @inbounds for (i, k) in enumerate(output_indices)
-        overlap = _zero
-        for j = 1:s
-            overlap += b[j] * dPhi[j, k]
-        end
-        temp[i] = overlap
-    end
-    @inbounds for i = 1:s
-        overlap = _zero
-        for j = 1:t
-            overlap += Q[j, i] * temp[j]
-        end
-        db[i] = -overlap
-    end
-    solve_upper_triangular!(db, R)
-    return db
-end
+# function pushforward_db!(
+#     db::AbstractVector{T},
+#     temp::AbstractVector{T},
+#     dPhi::AbstractMatrix{T},
+#     b::AbstractVector{T},
+#     Q::AbstractMatrix{T},
+#     R::AbstractMatrix{T},
+#     output_indices::AbstractVector{Int},
+# ) where {T}
+#     s = length(db)
+#     t = length(temp)
+#     @assert s == size(dPhi, 1)
+#     @assert (s,) == size(b)
+#     @assert (t, s) == size(Q)
+#     @assert (s, s) == size(R)
+#     @assert (t,) == size(output_indices)
+#     _zero = zero(T)
+#     @inbounds for (i, k) in enumerate(output_indices)
+#         overlap = _zero
+#         for j = 1:s
+#             overlap += b[j] * dPhi[j, k]
+#         end
+#         temp[i] = overlap
+#     end
+#     @inbounds for i = 1:s
+#         overlap = _zero
+#         for j = 1:t
+#             overlap += Q[j, i] * temp[j]
+#         end
+#         db[i] = -overlap
+#     end
+#     solve_upper_triangular!(db, R)
+#     return db
+# end
 
 
-function pushforward_db!(
-    db::AbstractVector{T},
-    temp::AbstractVector{T},
-    residuals::AbstractVector{T},
-    dPhi::AbstractMatrix{T},
-    b::AbstractVector{T},
-    Q::AbstractMatrix{T},
-    R::AbstractMatrix{T},
-    output_indices::AbstractVector{Int},
-) where {T}
-    s = length(db)
-    t = length(temp)
-    @assert (t,) == size(residuals)
-    @assert s == size(dPhi, 1)
-    @assert (s,) == size(b)
-    @assert (t, s) == size(Q)
-    @assert (s, s) == size(R)
-    @assert (t,) == size(output_indices)
-    _zero = zero(T)
-    @simd ivdep for i = 1:s
-        @inbounds db[i] = _zero
-    end
-    @inbounds for (i, k) in enumerate(output_indices)
-        r = residuals[i]
-        @simd ivdep for j = 1:s
-            db[j] += r * dPhi[j, k]
-        end
-    end
-    solve_lower_triangular!(db, R)
-    @inbounds for (i, k) in enumerate(output_indices)
-        overlap = _zero
-        for j = 1:s
-            overlap += b[j] * dPhi[j, k]
-        end
-        temp[i] = overlap
-    end
-    @inbounds for i = 1:s
-        overlap = _zero
-        for j = 1:t
-            overlap += Q[j, i] * temp[j]
-        end
-        db[i] = -(db[i] + overlap)
-    end
-    solve_upper_triangular!(db, R)
-    return db
-end
+# function pushforward_db!(
+#     db::AbstractVector{T},
+#     temp::AbstractVector{T},
+#     residuals::AbstractVector{T},
+#     dPhi::AbstractMatrix{T},
+#     b::AbstractVector{T},
+#     Q::AbstractMatrix{T},
+#     R::AbstractMatrix{T},
+#     output_indices::AbstractVector{Int},
+# ) where {T}
+#     s = length(db)
+#     t = length(temp)
+#     @assert (t,) == size(residuals)
+#     @assert s == size(dPhi, 1)
+#     @assert (s,) == size(b)
+#     @assert (t, s) == size(Q)
+#     @assert (s, s) == size(R)
+#     @assert (t,) == size(output_indices)
+#     _zero = zero(T)
+#     @simd ivdep for i = 1:s
+#         @inbounds db[i] = _zero
+#     end
+#     @inbounds for (i, k) in enumerate(output_indices)
+#         r = residuals[i]
+#         @simd ivdep for j = 1:s
+#             db[j] += r * dPhi[j, k]
+#         end
+#     end
+#     solve_lower_triangular!(db, R)
+#     @inbounds for (i, k) in enumerate(output_indices)
+#         overlap = _zero
+#         for j = 1:s
+#             overlap += b[j] * dPhi[j, k]
+#         end
+#         temp[i] = overlap
+#     end
+#     @inbounds for i = 1:s
+#         overlap = _zero
+#         for j = 1:t
+#             overlap += Q[j, i] * temp[j]
+#         end
+#         db[i] = -(db[i] + overlap)
+#     end
+#     solve_upper_triangular!(db, R)
+#     return db
+# end
 
 
 function pushforward_dresiduals!(
@@ -492,117 +575,117 @@ end
 ############################################ GRADIENT COMPUTATION (REVERSE-MODE)
 
 
-function pullback_dPhi_from_residual!(
-    dPhi::AbstractMatrix{T}, b::AbstractVector{T},
-    residuals::AbstractVector{T}, source_indices::AbstractVector{Int}
-) where {T}
-    n, m = size(dPhi)
-    @assert (n,) == size(b)
-    @assert (m,) == size(source_indices)
-    _zero = zero(T)
-    @inbounds for (k, s) in Iterators.reverse(enumerate(source_indices))
-        if s == -1
-            @simd ivdep for j = 1:n
-                dPhi[j, k] = _zero
-            end
-        else
-            residual = residuals[s]
-            twice_residual = residual + residual
-            @simd ivdep for j = 1:n
-                dPhi[j, k] = twice_residual * b[j]
-            end
-        end
-    end
-    return dPhi
-end
+# function pullback_dPhi_from_residual!(
+#     dPhi::AbstractMatrix{T}, b::AbstractVector{T},
+#     residuals::AbstractVector{T}, source_indices::AbstractVector{Int}
+# ) where {T}
+#     n, m = size(dPhi)
+#     @assert (n,) == size(b)
+#     @assert (m,) == size(source_indices)
+#     _zero = zero(T)
+#     @inbounds for (k, s) in Iterators.reverse(enumerate(source_indices))
+#         if s == NULL_INDEX
+#             @simd ivdep for j = 1:n
+#                 dPhi[j, k] = _zero
+#             end
+#         else
+#             residual = residuals[s]
+#             twice_residual = residual + residual
+#             @simd ivdep for j = 1:n
+#                 dPhi[j, k] = twice_residual * b[j]
+#             end
+#         end
+#     end
+#     return dPhi
+# end
 
 
-function pullback_dPhi!(
-    dPhi::AbstractMatrix{T}, A::AbstractMatrix{T}, Phi::AbstractMatrix{T},
-    child_indices::AbstractVector{Int},
-    sibling_ranges::AbstractVector{UnitRange{Int}},
-    sibling_indices::AbstractVector{Pair{Int,Int}}
-) where {T}
-    n, m = size(dPhi)
-    @assert (n, m) == size(Phi)
-    @assert (n, n) == size(A)
-    @assert (m,) == size(child_indices)
-    @assert (m,) == size(sibling_ranges)
-    @inbounds for k = m:-1:1
-        c = child_indices[k]
-        if c != -1
-            for j = 1:n
-                temp = dPhi[j, k]
-                for i = 1:n
-                    temp += A[i, j] * dPhi[i, c]
-                end
-                dPhi[j, k] = temp
-            end
-        end
-        for i in sibling_ranges[k]
-            (p, q) = sibling_indices[i]
-            @simd ivdep for j = 1:n
-                dPhi[j, k] += Phi[j, p] * dPhi[j, q]
-            end
-        end
-    end
-    return dPhi
-end
+# function pullback_dPhi!(
+#     dPhi::AbstractMatrix{T}, A::AbstractMatrix{T}, Phi::AbstractMatrix{T},
+#     child_indices::AbstractVector{Int},
+#     sibling_ranges::AbstractVector{UnitRange{Int}},
+#     sibling_indices::AbstractVector{Pair{Int,Int}}
+# ) where {T}
+#     n, m = size(dPhi)
+#     @assert (n, m) == size(Phi)
+#     @assert (n, n) == size(A)
+#     @assert (m,) == size(child_indices)
+#     @assert (m,) == size(sibling_ranges)
+#     @inbounds for k = m:-1:1
+#         c = child_indices[k]
+#         if c != -1
+#             for j = 1:n
+#                 temp = dPhi[j, k]
+#                 for i = 1:n
+#                     temp += A[i, j] * dPhi[i, c]
+#                 end
+#                 dPhi[j, k] = temp
+#             end
+#         end
+#         for i in sibling_ranges[k]
+#             (p, q) = sibling_indices[i]
+#             @simd ivdep for j = 1:n
+#                 dPhi[j, k] += Phi[j, p] * dPhi[j, q]
+#             end
+#         end
+#     end
+#     return dPhi
+# end
 
 
-function pullback_dA!(
-    dA::AbstractMatrix{T}, Phi::AbstractMatrix{T}, dPhi::AbstractMatrix{T},
-    child_indices::AbstractVector{Int}
-) where {T}
-    n, m = size(Phi)
-    @assert (n, m) == size(dPhi)
-    @assert (n, n) == size(dA)
-    @assert (m,) == size(child_indices)
-    _zero = zero(T)
-    @inbounds for j = 1:n
-        @simd ivdep for i = 1:n
-            dA[i, j] = _zero
-        end
-    end
-    @inbounds for (k, c) in enumerate(child_indices)
-        if c != -1
-            for t = 1:n
-                f = Phi[t, k]
-                @simd ivdep for s = 1:n
-                    dA[s, t] += f * dPhi[s, c]
-                end
-            end
-        end
-    end
-    return dA
-end
+# function pullback_dA!(
+#     dA::AbstractMatrix{T}, Phi::AbstractMatrix{T}, dPhi::AbstractMatrix{T},
+#     child_indices::AbstractVector{Int}
+# ) where {T}
+#     n, m = size(Phi)
+#     @assert (n, m) == size(dPhi)
+#     @assert (n, n) == size(dA)
+#     @assert (m,) == size(child_indices)
+#     _zero = zero(T)
+#     @inbounds for j = 1:n
+#         @simd ivdep for i = 1:n
+#             dA[i, j] = _zero
+#         end
+#     end
+#     @inbounds for (k, c) in enumerate(child_indices)
+#         if c != -1
+#             for t = 1:n
+#                 f = Phi[t, k]
+#                 @simd ivdep for s = 1:n
+#                     dA[s, t] += f * dPhi[s, c]
+#                 end
+#             end
+#         end
+#     end
+#     return dA
+# end
 
 
-function pullback_db!(
-    db::AbstractVector{T}, Phi::AbstractMatrix{T},
-    residuals::AbstractVector{T}, output_indices::AbstractVector{Int}
-) where {T}
-    n = length(db)
-    m = length(residuals)
-    @assert n == size(Phi, 1)
-    @assert m == length(output_indices)
-    _zero = zero(T)
-    @inbounds begin
-        @simd ivdep for i = 1:n
-            db[i] = _zero
-        end
-        for (i, k) in enumerate(output_indices)
-            r = residuals[i]
-            @simd ivdep for j = 1:n
-                db[j] += r * Phi[j, k]
-            end
-        end
-        @simd ivdep for i = 1:n
-            db[i] += db[i]
-        end
-    end
-    return db
-end
+# function pullback_db!(
+#     db::AbstractVector{T}, Phi::AbstractMatrix{T},
+#     residuals::AbstractVector{T}, output_indices::AbstractVector{Int}
+# ) where {T}
+#     n = length(db)
+#     m = length(residuals)
+#     @assert n == size(Phi, 1)
+#     @assert m == length(output_indices)
+#     _zero = zero(T)
+#     @inbounds begin
+#         @simd ivdep for i = 1:n
+#             db[i] = _zero
+#         end
+#         for (i, k) in enumerate(output_indices)
+#             r = residuals[i]
+#             @simd ivdep for j = 1:n
+#                 db[j] += r * Phi[j, k]
+#             end
+#         end
+#         @simd ivdep for i = 1:n
+#             db[i] += db[i]
+#         end
+#     end
+#     return db
+# end
 
 
 ########################################################### LEAST-SQUARES SOLVER
@@ -615,109 +698,109 @@ end
 @inline inv_sqrt(x::T) where {T} = inv(sqrt(x))
 
 
-function gram_schmidt_qr!(Q::AbstractMatrix{T}) where {T}
-    t, s = size(Q)
-    _zero = zero(T)
-    @inbounds for i = 1:s
-        squared_norm = _zero
-        for k = 1:t
-            squared_norm += abs2(Q[k, i])
-        end
-        if !iszero(squared_norm)
-            inv_norm = inv_sqrt(squared_norm)
-            @simd ivdep for k = 1:t
-                Q[k, i] *= inv_norm
-            end
-            for j = i+1:s
-                overlap = _zero
-                for k = 1:t
-                    overlap += Q[k, i] * Q[k, j]
-                end
-                @simd ivdep for k = 1:t
-                    Q[k, j] -= overlap * Q[k, i]
-                end
-            end
-        end
-    end
-    return Q
-end
+# function gram_schmidt_qr!(Q::AbstractMatrix{T}) where {T}
+#     t, s = size(Q)
+#     _zero = zero(T)
+#     @inbounds for i = 1:s
+#         squared_norm = _zero
+#         for k = 1:t
+#             squared_norm += abs2(Q[k, i])
+#         end
+#         if !iszero(squared_norm)
+#             inv_norm = inv_sqrt(squared_norm)
+#             @simd ivdep for k = 1:t
+#                 Q[k, i] *= inv_norm
+#             end
+#             for j = i+1:s
+#                 overlap = _zero
+#                 for k = 1:t
+#                     overlap += Q[k, i] * Q[k, j]
+#                 end
+#                 @simd ivdep for k = 1:t
+#                     Q[k, j] -= overlap * Q[k, i]
+#                 end
+#             end
+#         end
+#     end
+#     return Q
+# end
 
 
-function gram_schmidt_qr!(Q::AbstractMatrix{T}, R::AbstractMatrix{T}) where {T}
-    t, s = size(Q)
-    @assert (s, s) == size(R)
-    # NOTE: R is stored transposed, and its diagonal is stored inverted.
-    _zero = zero(T)
-    @inbounds for i = 1:s
-        squared_norm = _zero
-        for k = 1:t
-            squared_norm += abs2(Q[k, i])
-        end
-        if !iszero(squared_norm)
-            inv_norm = inv_sqrt(squared_norm)
-            R[i, i] = inv_norm
-            @simd ivdep for k = 1:t
-                Q[k, i] *= inv_norm
-            end
-            for j = i+1:s
-                overlap = _zero
-                for k = 1:t
-                    overlap += Q[k, i] * Q[k, j]
-                end
-                R[j, i] = overlap
-                @simd ivdep for k = 1:t
-                    Q[k, j] -= overlap * Q[k, i]
-                end
-            end
-        else
-            R[i, i] = _zero
-        end
-    end
-    return (Q, R)
-end
+# function gram_schmidt_qr!(Q::AbstractMatrix{T}, R::AbstractMatrix{T}) where {T}
+#     t, s = size(Q)
+#     @assert (s, s) == size(R)
+#     # NOTE: R is stored transposed, and its diagonal is stored inverted.
+#     _zero = zero(T)
+#     @inbounds for i = 1:s
+#         squared_norm = _zero
+#         for k = 1:t
+#             squared_norm += abs2(Q[k, i])
+#         end
+#         if !iszero(squared_norm)
+#             inv_norm = inv_sqrt(squared_norm)
+#             R[i, i] = inv_norm
+#             @simd ivdep for k = 1:t
+#                 Q[k, i] *= inv_norm
+#             end
+#             for j = i+1:s
+#                 overlap = _zero
+#                 for k = 1:t
+#                     overlap += Q[k, i] * Q[k, j]
+#                 end
+#                 R[j, i] = overlap
+#                 @simd ivdep for k = 1:t
+#                     Q[k, j] -= overlap * Q[k, i]
+#                 end
+#             end
+#         else
+#             R[i, i] = _zero
+#         end
+#     end
+#     return (Q, R)
+# end
 
 
-function solve_upper_triangular!(
-    b::AbstractVector{T}, R::AbstractMatrix{T}
-) where {T}
-    s = length(b)
-    @assert (s, s) == size(R)
-    # NOTE: R is stored transposed, and its diagonal is stored inverted.
-    _zero = zero(T)
-    @inbounds for i = s:-1:1
-        if iszero(R[i, i])
-            b[i] = _zero
-        else
-            overlap = _zero
-            for j = i+1:s
-                overlap += R[j, i] * b[j]
-            end
-            b[i] = R[i, i] * (b[i] - overlap)
-        end
-    end
-    return b
-end
+# function solve_upper_triangular!(
+#     b::AbstractVector{T}, R::AbstractMatrix{T}
+# ) where {T}
+#     s = length(b)
+#     @assert (s, s) == size(R)
+#     # NOTE: R is stored transposed, and its diagonal is stored inverted.
+#     _zero = zero(T)
+#     @inbounds for i = s:-1:1
+#         if iszero(R[i, i])
+#             b[i] = _zero
+#         else
+#             overlap = _zero
+#             for j = i+1:s
+#                 overlap += R[j, i] * b[j]
+#             end
+#             b[i] = R[i, i] * (b[i] - overlap)
+#         end
+#     end
+#     return b
+# end
 
 
-function solve_lower_triangular!(
-    b::AbstractVector{T}, L::AbstractMatrix{T}
-) where {T}
-    s = length(b)
-    @assert (s, s) == size(L)
-    # NOTE: The diagonal of L is stored inverted.
-    _zero = zero(T)
-    @inbounds for i = 1:s
-        if iszero(L[i, i])
-            b[i] = _zero
-        else
-            b[i] *= L[i, i]
-            for j = i+1:s
-                b[j] -= L[j, i] * b[i]
-            end
-        end
-    end
-    return b
-end
+# function solve_lower_triangular!(
+#     b::AbstractVector{T}, L::AbstractMatrix{T}
+# ) where {T}
+#     s = length(b)
+#     @assert (s, s) == size(L)
+#     # NOTE: The diagonal of L is stored inverted.
+#     _zero = zero(T)
+#     @inbounds for i = 1:s
+#         if iszero(L[i, i])
+#             b[i] = _zero
+#         else
+#             b[i] *= L[i, i]
+#             for j = i+1:s
+#                 b[j] -= L[j, i] * b[i]
+#             end
+#         end
+#     end
+#     return b
+# end
 
 
 ################################################### RESHAPING COEFFICIENT ARRAYS
@@ -726,10 +809,17 @@ end
 function reshape_explicit!(
     A::AbstractMatrix{T}, x::AbstractVector{T}
 ) where {T}
+
+    # Validate array dimensions.
     s = size(A, 1)
     @assert s == size(A, 2)
     @assert ((s * (s - 1)) >> 1,) == size(x)
+    Base.require_one_based_indexing(A, x)
+
+    # Construct numeric constants.
     _zero = zero(T)
+
+    # Iterate over the strict lower-triangular part of A.
     offset = 0
     for i = 1:s
         @simd ivdep for j = 1:i-1
@@ -740,6 +830,7 @@ function reshape_explicit!(
             @inbounds A[i, j] = _zero
         end
     end
+
     return A
 end
 
@@ -747,9 +838,14 @@ end
 function reshape_explicit!(
     x::AbstractVector{T}, A::AbstractMatrix{T}
 ) where {T}
+
+    # Validate array dimensions.
     s = size(A, 1)
     @assert s == size(A, 2)
     @assert ((s * (s - 1)) >> 1,) == size(x)
+    Base.require_one_based_indexing(x, A)
+
+    # Iterate over the strict lower-triangular part of A.
     offset = 0
     for i = 2:s
         @simd ivdep for j = 1:i-1
@@ -764,10 +860,17 @@ end
 function reshape_explicit!(
     A::AbstractMatrix{T}, b::AbstractVector{T}, x::AbstractVector{T}
 ) where {T}
+
+    # Validate array dimensions.
     s = length(b)
     @assert (s, s) == size(A)
     @assert ((s * (s + 1)) >> 1,) == size(x)
+    Base.require_one_based_indexing(A, b, x)
+
+    # Construct numeric constants.
     _zero = zero(T)
+
+    # Iterate over the strict lower-triangular part of A.
     offset = 0
     for i = 1:s
         @simd ivdep for j = 1:i-1
@@ -778,6 +881,8 @@ function reshape_explicit!(
             @inbounds A[i, j] = _zero
         end
     end
+
+    # Iterate over b.
     @simd ivdep for i = 1:s
         @inbounds b[i] = x[offset+i]
     end
@@ -788,9 +893,14 @@ end
 function reshape_explicit!(
     x::AbstractVector{T}, A::AbstractMatrix{T}, b::AbstractVector{T}
 ) where {T}
+
+    # Validate array dimensions.
     s = length(b)
     @assert (s, s) == size(A)
     @assert ((s * (s + 1)) >> 1,) == size(x)
+    Base.require_one_based_indexing(x, A, b)
+
+    # Iterate over the strict lower-triangular part of A.
     offset = 0
     for i = 2:s
         @simd ivdep for j = 1:i-1
@@ -798,6 +908,8 @@ function reshape_explicit!(
         end
         offset += i - 1
     end
+
+    # Iterate over b.
     @simd ivdep for i = 1:s
         @inbounds x[offset+i] = b[i]
     end
@@ -808,10 +920,17 @@ end
 function reshape_diagonally_implicit!(
     A::AbstractMatrix{T}, x::AbstractVector{T}
 ) where {T}
+
+    # Validate array dimensions.
     s = size(A, 1)
     @assert s == size(A, 2)
     @assert ((s * (s + 1)) >> 1,) == size(x)
+    Base.require_one_based_indexing(A, x)
+
+    # Construct numeric constants.
     _zero = zero(T)
+
+    # Iterate over the lower-triangular part of A.
     offset = 0
     for i = 1:s
         @simd ivdep for j = 1:i
@@ -829,9 +948,14 @@ end
 function reshape_diagonally_implicit!(
     x::AbstractVector{T}, A::AbstractMatrix{T}
 ) where {T}
+
+    # Validate array dimensions.
     s = size(A, 1)
     @assert s == size(A, 2)
     @assert ((s * (s + 1)) >> 1,) == size(x)
+    Base.require_one_based_indexing(x, A)
+
+    # Iterate over the lower-triangular part of A.
     offset = 0
     for i = 1:s
         @simd ivdep for j = 1:i
@@ -846,10 +970,17 @@ end
 function reshape_diagonally_implicit!(
     A::AbstractMatrix{T}, b::AbstractVector{T}, x::AbstractVector{T}
 ) where {T}
+
+    # Validate array dimensions.
     s = length(b)
     @assert (s, s) == size(A)
     @assert ((s * (s + 3)) >> 1,) == size(x)
+    Base.require_one_based_indexing(A, b, x)
+
+    # Construct numeric constants.
     _zero = zero(T)
+
+    # Iterate over the lower-triangular part of A.
     offset = 0
     for i = 1:s
         @simd ivdep for j = 1:i
@@ -860,6 +991,8 @@ function reshape_diagonally_implicit!(
             @inbounds A[i, j] = _zero
         end
     end
+
+    # Iterate over b.
     @simd ivdep for i = 1:s
         @inbounds b[i] = x[offset+i]
     end
@@ -870,9 +1003,14 @@ end
 function reshape_diagonally_implicit!(
     x::AbstractVector{T}, A::AbstractMatrix{T}, b::AbstractVector{T}
 ) where {T}
+
+    # Validate array dimensions.
     s = length(b)
     @assert (s, s) == size(A)
     @assert ((s * (s + 3)) >> 1,) == size(x)
+    Base.require_one_based_indexing(x, A, b)
+
+    # Iterate over the lower-triangular part of A.
     offset = 0
     for i = 1:s
         @simd ivdep for j = 1:i
@@ -880,6 +1018,8 @@ function reshape_diagonally_implicit!(
         end
         offset += i
     end
+
+    # Iterate over b.
     @simd ivdep for i = 1:s
         @inbounds x[offset+i] = b[i]
     end
@@ -890,9 +1030,14 @@ end
 function reshape_implicit!(
     A::AbstractMatrix{T}, x::AbstractVector{T}
 ) where {T}
+
+    # Validate array dimensions.
     s = size(A, 1)
     @assert s == size(A, 2)
     @assert (s * s,) == size(x)
+    Base.require_one_based_indexing(A, x)
+
+    # Iterate over A.
     offset = 0
     for i = 1:s
         @simd ivdep for j = 1:s
@@ -907,9 +1052,14 @@ end
 function reshape_implicit!(
     x::AbstractVector{T}, A::AbstractMatrix{T}
 ) where {T}
+
+    # Validate array dimensions.
     s = size(A, 1)
     @assert s == size(A, 2)
     @assert (s * s,) == size(x)
+    Base.require_one_based_indexing(x, A)
+
+    # Iterate over A.
     offset = 0
     for i = 1:s
         @simd ivdep for j = 1:s
@@ -924,9 +1074,14 @@ end
 function reshape_implicit!(
     A::AbstractMatrix{T}, b::AbstractVector{T}, x::AbstractVector{T}
 ) where {T}
+
+    # Validate array dimensions.
     s = size(A, 1)
     @assert s == size(A, 2)
     @assert (s * (s + 1),) == size(x)
+    Base.require_one_based_indexing(A, b, x)
+
+    # Iterate over A.
     offset = 0
     for i = 1:s
         @simd ivdep for j = 1:s
@@ -934,6 +1089,8 @@ function reshape_implicit!(
         end
         offset += s
     end
+
+    # Iterate over b.
     @simd ivdep for i = 1:s
         @inbounds b[i] = x[offset+i]
     end
@@ -944,9 +1101,14 @@ end
 function reshape_implicit!(
     x::AbstractVector{T}, A::AbstractMatrix{T}, b::AbstractVector{T}
 ) where {T}
+
+    # Validate array dimensions.
     s = size(A, 1)
     @assert s == size(A, 2)
     @assert (s * (s + 1),) == size(x)
+    Base.require_one_based_indexing(x, A, b)
+
+    # Iterate over A.
     offset = 0
     for i = 1:s
         @simd ivdep for j = 1:s
@@ -954,6 +1116,9 @@ function reshape_implicit!(
         end
         offset += s
     end
+
+    # Iterate over b.
+    copy!
     @simd ivdep for i = 1:s
         @inbounds x[offset+i] = b[i]
     end
@@ -964,28 +1129,28 @@ end
 ############################################################## FUNCTOR INTERFACE
 
 
-function populate_Q!(
-    Q::AbstractMatrix{T}, Phi::AbstractMatrix{T},
-    output_indices::AbstractVector{Int}
-) where {T}
-    t, s = size(Q)
-    @assert s == size(Phi, 1)
-    @assert (t,) == size(output_indices)
-    for (i, k) in enumerate(output_indices)
-        @simd ivdep for j = 1:s
-            @inbounds Q[i, j] = Phi[j, k]
-        end
-    end
-end
+# function populate_Q!(
+#     Q::AbstractMatrix{T}, Phi::AbstractMatrix{T},
+#     output_indices::AbstractVector{Int}
+# ) where {T}
+#     t, s = size(Q)
+#     @assert s == size(Phi, 1)
+#     @assert (t,) == size(output_indices)
+#     for (i, k) in enumerate(output_indices)
+#         @simd ivdep for j = 1:s
+#             @inbounds Q[i, j] = Phi[j, k]
+#         end
+#     end
+# end
 
 
-function residual_norm_squared(residuals::AbstractVector{T}) where {T}
-    result = zero(T)
-    for r in residuals
-        result += abs2(r)
-    end
-    return result
-end
+# function residual_norm_squared(residuals::AbstractVector{T}) where {T}
+#     result = zero(T)
+#     for r in residuals
+#         result += abs2(r)
+#     end
+#     return result
+# end
 
 
 # function (ev::RKOCEvaluatorAE{T})(x::Vector{T}) where {T}
