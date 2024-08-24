@@ -290,6 +290,9 @@ end
 ########################################################### BUTCHER INSTRUCTIONS
 
 
+const NULL_INDEX = typemin(Int)
+
+
 struct ButcherInstruction
     left::Int
     right::Int
@@ -307,14 +310,14 @@ function find_butcher_instruction(
 )
     legs = extract_legs(tree)
     if isempty(legs)
-        return ButcherInstruction(-1, -1, 1, 0)
+        return ButcherInstruction(NULL_INDEX, NULL_INDEX, 1, 0)
     elseif isone(length(legs))
         leg = only(legs)
         if haskey(indices, leg)
             index = indices[leg]
             instruction = instructions[index]
-            return ButcherInstruction(
-                index, -1, instruction.depth + 1, instruction.deficit + 1)
+            return ButcherInstruction(index, NULL_INDEX,
+                instruction.depth + 1, instruction.deficit + 1)
         else
             return nothing
         end
@@ -385,11 +388,11 @@ end
 
 
 permute_butcher_instruction(
-    instruction::ButcherInstruction, permutation::Vector{Int}
+    insn::ButcherInstruction, perm::Vector{Int}
 ) = ButcherInstruction(
-    (instruction.left == -1) ? -1 : permutation[instruction.left],
-    (instruction.right == -1) ? -1 : permutation[instruction.right],
-    instruction.depth, instruction.deficit)
+    (insn.left == NULL_INDEX) ? NULL_INDEX : perm[insn.left],
+    (insn.right == NULL_INDEX) ? NULL_INDEX : perm[insn.right],
+    insn.depth, insn.deficit)
 
 
 function push_necessary_subtrees!(
@@ -457,10 +460,10 @@ end
 function execute_instructions(instructions::Vector{ButcherInstruction})
     result = LevelSequence[]
     for instruction in instructions
-        if instruction.left == -1
-            @assert instruction.right == -1
+        if instruction.left == NULL_INDEX
+            @assert instruction.right == NULL_INDEX
             push!(result, LevelSequence([1]))
-        elseif instruction.right == -1
+        elseif instruction.right == NULL_INDEX
             push!(result, LevelSequence(vcat([1],
                 result[instruction.left].data .+ 1)))
         else
@@ -491,12 +494,12 @@ end
 
 
 function compute_children_siblings(instructions::Vector{ButcherInstruction})
-    children = [-1 for _ in instructions]
+    children = [NULL_INDEX for _ in instructions]
     siblings = [Pair{Int,Int}[] for _ in instructions]
     for (i, instruction) in enumerate(instructions)
-        if instruction.left == -1
-            @assert instruction.right == -1
-        elseif instruction.right == -1
+        if instruction.left == NULL_INDEX
+            @assert instruction.right == NULL_INDEX
+        elseif instruction.right == NULL_INDEX
             children[instruction.left] = i
         else
             push!(siblings[instruction.left], instruction.right => i)
@@ -509,7 +512,7 @@ end
 
 function ButcherInstructionTable(trees::Vector{LevelSequence})
     instructions, output_indices = build_instructions(trees)
-    source_indices = [-1 for _ in instructions]
+    source_indices = [NULL_INDEX for _ in instructions]
     for (i, j) in enumerate(output_indices)
         source_indices[j] = i
     end

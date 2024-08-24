@@ -1,9 +1,17 @@
 # RungeKuttaToolKit.jl Documentation
 
 ```@docs
-RKOCResidualEvaluator
+RKOCEvaluator
 ```
 
 ```@docs
-RungeKuttaToolKit.compute_phi!
+RungeKuttaToolKit.compute_Phi!
+```
+
+```@docs
+RungeKuttaToolKit.compute_residuals!
+```
+
+```@docs
+Adder
 ```

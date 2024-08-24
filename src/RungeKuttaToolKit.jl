@@ -6,7 +6,7 @@ using MultiFloats: MultiFloat, rsqrt
 
 include("ButcherInstructions.jl")
 using .ButcherInstructions: LevelSequence,
-    ButcherInstruction, ButcherInstructionTable,
+    NULL_INDEX, ButcherInstruction, ButcherInstructionTable,
     rooted_trees, all_rooted_trees, butcher_density, butcher_symmetry
 export LevelSequence, ButcherInstruction, ButcherInstructionTable,
     rooted_trees, all_rooted_trees, butcher_density, butcher_symmetry
@@ -15,217 +15,192 @@ export LevelSequence, ButcherInstruction, ButcherInstructionTable,
 ###################################################### EVALUATOR DATA STRUCTURES
 
 
-export RKOCResidualEvaluator, RKOCCostEvaluator
-export RKOCResidualEvaluatorQR, RKOCCostEvaluatorQR
+export RKOCEvaluator, RKOCEvaluatorQR
 
 
-"""
-    RKOCResidualEvaluator{T}
-
-Workspace structure for evaluating the residual vector and Jacobian matrix of
-the Runge--Kutta order conditions.
-"""
-struct RKOCResidualEvaluator{T}
+struct RKOCEvaluator{T}
     table::ButcherInstructionTable
-    A::Matrix{T}
-    b::Vector{T}
-    phi::Matrix{T}
-    dphi::Matrix{T}
+    Phi::Matrix{T}
+    dPhi::Matrix{T}
     inv_gamma::Vector{T}
 end
 
 
-"""
-    RKOCResidualEvaluator{T}(trees::Vector{LevelSequence}, s::Int)
-
-Construct an `RKOCResidualEvaluator` for a given set of rooted trees and number
-of stages.
-"""
-function RKOCResidualEvaluator{T}(
-    trees::Vector{LevelSequence}, s::Int
+function RKOCEvaluator{T}(
+    trees::AbstractVector{LevelSequence}, s::Int
 ) where {T}
     table = ButcherInstructionTable(trees)
-    return RKOCResidualEvaluator{T}(table,
-        Matrix{T}(undef, s, s), Vector{T}(undef, s),
+    return RKOCEvaluator{T}(table,
         Matrix{T}(undef, s, length(table.instructions)),
         Matrix{T}(undef, s, length(table.instructions)),
         [inv(T(butcher_density(tree))) for tree in trees])
 end
 
 
-@inline RKOCResidualEvaluator{T}(p::Int, s::Int) where {T} =
-    RKOCResidualEvaluator{T}(all_rooted_trees(p), s)
+@inline RKOCEvaluator{T}(p::Int, s::Int) where {T} =
+    RKOCEvaluator{T}(all_rooted_trees(p), s)
 
 
-struct RKOCCostEvaluator{T}
+struct RKOCEvaluatorQR{T}
     table::ButcherInstructionTable
-    A::Matrix{T}
-    dA::Matrix{T}
-    b::Vector{T}
-    db::Vector{T}
-    phi::Matrix{T}
-    dphi::Matrix{T}
-    inv_gamma::Vector{T}
-    residuals::Vector{T}
-end
-
-
-function RKOCCostEvaluator{T}(trees::Vector{LevelSequence}, s::Int) where {T}
-    table = ButcherInstructionTable(trees)
-    return RKOCCostEvaluator{T}(table,
-        Matrix{T}(undef, s, s), Matrix{T}(undef, s, s),
-        Vector{T}(undef, s), Vector{T}(undef, s),
-        Matrix{T}(undef, s, length(table.instructions)),
-        Matrix{T}(undef, s, length(table.instructions)),
-        [inv(T(butcher_density(tree))) for tree in trees],
-        Vector{T}(undef, length(trees)))
-end
-
-
-struct RKOCResidualEvaluatorQR{T}
-    table::ButcherInstructionTable
-    A::Matrix{T}
-    b::Vector{T}
-    db::Vector{T}
-    phi::Matrix{T}
-    dphi::Matrix{T}
+    Phi::Matrix{T}
+    dPhi::Matrix{T}
     Q::Matrix{T}
     R::Matrix{T}
     inv_gamma::Vector{T}
-    residuals::Vector{T}
 end
 
 
-function RKOCResidualEvaluatorQR{T}(
-    trees::Vector{LevelSequence}, s::Int
-) where {T}
+function RKOCEvaluatorQR{T}(trees::Vector{LevelSequence}, s::Int) where {T}
     table = ButcherInstructionTable(trees)
-    return RKOCResidualEvaluatorAE{T}(table,
-        Matrix{T}(undef, s, s), Vector{T}(undef, s), Vector{T}(undef, s),
+    return RKOCEvaluatorQR{T}(table,
         Matrix{T}(undef, s, length(table.instructions)),
         Matrix{T}(undef, s, length(table.instructions)),
         Matrix{T}(undef, length(trees), s),
         Matrix{T}(undef, s, s),
-        [inv(T(butcher_density(tree))) for tree in trees],
-        Vector{T}(undef, length(trees)))
+        [inv(T(butcher_density(tree))) for tree in trees])
 end
 
 
-struct RKOCCostEvaluatorQR{T}
-    table::ButcherInstructionTable
-    A::Matrix{T}
-    dA::Matrix{T}
-    phi::Matrix{T}
-    dphi::Matrix{T}
-    Q::Matrix{T}
-    R::Matrix{T}
-    b::Vector{T}
-    inv_gamma::Vector{T}
-    residuals::Vector{T}
-end
-
-
-function RKOCCostEvaluatorQR{T}(trees::Vector{LevelSequence}, s::Int) where {T}
-    table = ButcherInstructionTable(trees)
-    return RKOCEvaluatorAE{T}(table,
-        Matrix{T}(undef, s, s), Matrix{T}(undef, s, s),
-        Matrix{T}(undef, s, length(table.instructions)),
-        Matrix{T}(undef, s, length(table.instructions)),
-        Matrix{T}(undef, length(trees), s),
-        Matrix{T}(undef, s, s), Vector{T}(undef, s),
-        [inv(T(butcher_density(tree))) for tree in trees],
-        Vector{T}(undef, length(trees)))
-end
+@inline RKOCEvaluatorQR{T}(p::Int, s::Int) where {T} =
+    RKOCEvaluatorQR{T}(all_rooted_trees(p), s)
 
 
 ################################################### PHI AND RESIDUAL COMPUTATION
 
 
 """
-    RungeKuttaToolKit.compute_phi!(
-        phi::AbstractMatrix{T},
+    RungeKuttaToolKit.compute_Phi!(
+        Phi::AbstractMatrix{T},
         A::AbstractMatrix{T},
-        instructions::Vector{ButcherInstruction}
+        instructions::AbstractVector{ButcherInstruction},
     ) where {T}
 
-Compute a sequence of Butcher weight vectors ``\\{ \\Phi_t(A) : t \\in T \\}``
-for a given matrix ``A`` and a sequence of rooted trees ``T`` represented by
-`instructions`.
+Compute Butcher weight vectors ``\\{ \\Phi_t(A) : t \\in T \\}`` for a given
+matrix ``A`` over a set of rooted trees ``T`` represented by `instructions`.
 
- - ``\\Phi`` is expected to be an ``s \\times |T|`` matrix.
- - ``A`` is expected to be an ``s \\times s`` matrix.
- - `instructions` is expected to be a vector of `ButcherInstruction` objects
-    of length ``|T|``.
+# Arguments
+- `Phi`: ``s \\times N`` output matrix. Each Butcher weight vector
+  ``\\Phi_t(A)`` is written to `Phi[:, i]`, where ``t`` is the rooted tree
+  represented by `instructions[i]`.
+- `A`: ``s \\times s`` input matrix containing the coefficients of a
+  Runge--Kutta method.
+- `instructions`: length ``N`` input vector of `ButcherInstruction` objects
+  encoding a set of rooted trees.
 
-Here, ``s`` is the number of stages in the Runge--Kutta method, and ``|T|`` is
-the number of trees in the sequence ``T``.
+Here, ``s`` is the number of stages in the Runge--Kutta method represented by
+`A`, and ``N`` is the number of rooted trees in ``T``.
 """
-function compute_phi!(
-    phi::AbstractMatrix{T},
+function compute_Phi!(
+    Phi::AbstractMatrix{T},
     A::AbstractMatrix{T},
-    instructions::Vector{ButcherInstruction}
+    instructions::AbstractVector{ButcherInstruction},
 ) where {T}
 
-    # Validate array sizes.
-    Base.require_one_based_indexing(phi, A)
-    s = size(phi, 1)
-    @assert (s, s) == size(A)
-    @assert size(phi, 2) == length(instructions)
+    # Validate array dimensions.
+    stage_indices = axes(Phi, 1)
+    instruction_indices = axes(Phi, 2)
+    @assert axes(Phi) == (stage_indices, instruction_indices)
+    @assert axes(A) == (stage_indices, stage_indices)
+    @assert axes(instructions) == (instruction_indices,)
 
     # Construct numeric constants.
     _zero = zero(T)
     _one = one(T)
 
     # Iterate over Butcher instructions.
-    @inbounds for (k, instruction) in enumerate(instructions)
+    @inbounds for (k, instruction) in pairs(instructions)
         p, q = instruction.left, instruction.right
-        if p == -1
+        if p == NULL_INDEX
             # The Butcher weight vector for the trivial tree
-            # (p == -1 and q == -1) is the all-ones vector.
-            @assert q == -1
-            @simd ivdep for j = 1:s
-                phi[j, k] = _one
+            # (p == NULL_INDEX and q == NULL_INDEX) is the all-ones vector.
+            @assert q == NULL_INDEX
+            @simd ivdep for j in stage_indices
+                Phi[j, k] = _one
             end
-        elseif q == -1
+        elseif q == NULL_INDEX
             # The Butcher weight vector for a tree obtained by extension
-            # (p > 0 and q == -1) is a matrix-vector product.
-            @simd ivdep for j = 1:s
-                phi[j, k] = _zero
+            # (p != NULL_INDEX and q == NULL_INDEX) is a matrix-vector product.
+            @simd ivdep for j in stage_indices
+                Phi[j, k] = _zero
             end
-            for i = 1:s
-                temp = phi[i, p]
-                @simd ivdep for j = 1:s
-                    phi[j, k] += temp * A[j, i]
+            for i in stage_indices
+                temp = Phi[i, p]
+                @simd ivdep for j in stage_indices
+                    Phi[j, k] += temp * A[j, i]
                 end
             end
         else
             # The Butcher weight vector for a tree obtained by rooted sum
-            # (p > 0 and q > 0) is an elementwise vector product.
-            @simd ivdep for j = 1:s
-                phi[j, k] = phi[j, p] * phi[j, q]
+            # (p != NULL_INDEX and q != NULL_INDEX) is an elementwise product.
+            @simd ivdep for j in stage_indices
+                Phi[j, k] = Phi[j, p] * Phi[j, q]
             end
         end
     end
 
-    return phi
+    return Phi
 end
 
 
+"""
+    RungeKuttaToolKit.compute_residuals!(
+        residuals::AbstractVector{T},
+        b::AbstractVector{T},
+        Phi::AbstractMatrix{T},
+        inv_gamma::AbstractVector{T},
+        output_indices::AbstractVector{Int},
+    ) where {T}
+
+Compute residuals ``\\{ \\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t) :
+t \\in T \\}`` of the Runge--Kutta order conditions over a set of rooted trees
+``T`` using precomputed Butcher weight vectors and density values.
+
+# Arguments
+- `residuals`: length ``N_{\\text{output}}`` output vector. Each residual
+  ``\\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t)`` is written to
+  `residuals[i]`, where ``t`` is the rooted tree whose Butcher weight vector
+  is precomputed in `Phi[:, output_indices[i]]`.
+- `b`: length ``s`` input vector containing the weights of a Runge--Kutta
+  method.
+- `Phi`: ``s \\times N_{\\text{internal}}`` input matrix containing
+  precomputed Butcher weight vectors. `Phi` may contain additional
+  Butcher weight vectors corresponding to rooted trees not in ``T``.
+- `inv_gamma`: length ``N_{\\text{output}}`` input vector containing
+  precomputed Butcher density values ``\\{ 1/\\gamma(t) : t \\in T \\}``.
+- `output_indices`: length ``N_{\\text{output}}`` input vector of indices
+  in the range ``1:N_{\\text{internal}}`` specifying the Butcher weight
+  vectors in `Phi` corresponding to the rooted trees in ``T``.
+
+Here, ``s`` is the number of stages in the Runge--Kutta method represented by
+`b`, ``N_{\\text{output}}`` is the number of rooted trees in ``T``, and
+``N_{\\text{internal}}`` is the number of Butcher weight vectors in `Phi`.
+"""
 function compute_residuals!(
-    residuals::AbstractVector{T}, b::AbstractVector{T},
-    phi::AbstractMatrix{T}, inv_gamma::AbstractVector{T},
-    output_indices::AbstractVector{Int}
+    residuals::AbstractVector{T},
+    b::AbstractVector{T},
+    Phi::AbstractMatrix{T},
+    inv_gamma::AbstractVector{T},
+    output_indices::AbstractVector{Int},
 ) where {T}
-    t = length(residuals)
+
+    # Validate array dimensions.
     s = length(b)
-    @assert s == size(phi, 1)
-    @assert (t,) == size(inv_gamma)
-    @assert (t,) == size(output_indices)
+    num_output_trees = length(residuals)
+    @assert s == size(Phi, 1)
+    @assert (num_output_trees,) == size(inv_gamma)
+    @assert (num_output_trees,) == size(output_indices)
+    Base.require_one_based_indexing(residuals, b, Phi, inv_gamma)
+
+    # Construct numeric constants.
     _zero = zero(T)
+
+    # Iterate over output indices.
     @inbounds for (i, k) in enumerate(output_indices)
+
         overlap = _zero
         for j = 1:s
-            overlap += b[j] * phi[j, k]
+            overlap += b[j] * Phi[j, k]
         end
         residuals[i] = overlap - inv_gamma[i]
     end
@@ -234,14 +209,20 @@ end
 
 
 function compute_residuals!(
-    residuals::AbstractVector{T}, Q::AbstractMatrix{T},
-    inv_gamma::AbstractVector{T}
+    residuals::AbstractVector{T},
+    Q::AbstractMatrix{T},
+    inv_gamma::AbstractVector{T},
 ) where {T}
+
+    # Validate array dimensions.
     t = length(residuals)
     s = size(Q, 2)
     @assert t == size(Q, 1)
     @assert (t,) == size(inv_gamma)
+
+    # Construct numeric constants.
     _zero = zero(T)
+
     @simd ivdep for i = 1:t
         @inbounds residuals[i] = -inv_gamma[i]
     end
@@ -259,14 +240,21 @@ end
 
 
 function compute_residuals_and_b!(
-    residuals::AbstractVector{T}, b::AbstractVector{T},
-    Q::AbstractMatrix{T}, inv_gamma::AbstractVector{T}
+    residuals::AbstractVector{T},
+    b::AbstractVector{T},
+    Q::AbstractMatrix{T},
+    inv_gamma::AbstractVector{T},
 ) where {T}
+
+    # Validate array dimensions.
     t = length(residuals)
     s = length(b)
     @assert (t, s) == size(Q)
     @assert (t,) == size(inv_gamma)
+
+    # Construct numeric constants.
     _zero = zero(T)
+
     @simd ivdep for i = 1:t
         @inbounds residuals[i] = -inv_gamma[i]
     end
@@ -287,92 +275,100 @@ end
 ############################################ GRADIENT COMPUTATION (FORWARD-MODE)
 
 
-function pushforward_dphi!(
-    dphi::AbstractMatrix{T}, phi::AbstractMatrix{T},
-    A::AbstractMatrix{T}, dA::AbstractMatrix{T},
-    instructions::Vector{ButcherInstruction}
+function pushforward_dPhi!(
+    dPhi::AbstractMatrix{T},
+    Phi::AbstractMatrix{T},
+    A::AbstractMatrix{T},
+    dA::AbstractMatrix{T},
+    instructions::AbstractVector{ButcherInstruction},
 ) where {T}
-    @assert size(dphi) == size(phi)
-    s = size(dphi, 1)
+    @assert size(dPhi) == size(Phi)
+    s = size(dPhi, 1)
     @assert (s, s) == size(dA)
     @assert (s, s) == size(A)
-    @assert size(dphi, 2) == length(instructions)
+    @assert size(dPhi, 2) == length(instructions)
     _zero = zero(T)
     @inbounds for (k, instruction) in enumerate(instructions)
         p, q = instruction.left, instruction.right
         if p == -1
             @assert q == -1
             @simd ivdep for j = 1:s
-                dphi[j, k] = _zero
+                dPhi[j, k] = _zero
             end
         elseif q == -1
             @simd ivdep for j = 1:s
-                dphi[j, k] = _zero
+                dPhi[j, k] = _zero
             end
             for i = 1:s
-                temp = phi[i, p]
-                dtemp = dphi[i, p]
+                temp = Phi[i, p]
+                dtemp = dPhi[i, p]
                 @simd ivdep for j = 1:s
-                    dphi[j, k] += dtemp * A[j, i] + temp * dA[j, i]
+                    dPhi[j, k] += dtemp * A[j, i] + temp * dA[j, i]
                 end
             end
         else
             @simd ivdep for j = 1:s
-                dphi[j, k] = dphi[j, p] * phi[j, q] + phi[j, p] * dphi[j, q]
+                dPhi[j, k] = dPhi[j, p] * Phi[j, q] + Phi[j, p] * dPhi[j, q]
             end
         end
     end
-    return dphi
+    return dPhi
 end
 
 
-function pushforward_dphi!(
-    dphi::AbstractMatrix{T}, phi::AbstractMatrix{T},
-    A::AbstractMatrix{T}, u::Int, v::Int,
-    instructions::Vector{ButcherInstruction}
+function pushforward_dPhi!(
+    dPhi::AbstractMatrix{T},
+    Phi::AbstractMatrix{T},
+    A::AbstractMatrix{T},
+    u::Int,
+    v::Int,
+    instructions::AbstractVector{ButcherInstruction},
 ) where {T}
-    @assert size(dphi) == size(phi)
-    s = size(dphi, 1)
+    @assert size(dPhi) == size(Phi)
+    s = size(dPhi, 1)
     @assert (s, s) == size(A)
-    @assert size(dphi, 2) == length(instructions)
+    @assert size(dPhi, 2) == length(instructions)
     _zero = zero(T)
     @inbounds for (k, instruction) in enumerate(instructions)
         p, q = instruction.left, instruction.right
         if p == -1
             @assert q == -1
             @simd ivdep for j = 1:s
-                dphi[j, k] = _zero
+                dPhi[j, k] = _zero
             end
         elseif q == -1
             @simd ivdep for j = 1:s
-                dphi[j, k] = _zero
+                dPhi[j, k] = _zero
             end
-            dphi[u, k] = phi[v, p]
+            dPhi[u, k] = Phi[v, p]
             for i = 1:s
-                dtemp = dphi[i, p]
+                dtemp = dPhi[i, p]
                 @simd ivdep for j = 1:s
-                    dphi[j, k] += dtemp * A[j, i]
+                    dPhi[j, k] += dtemp * A[j, i]
                 end
             end
         else
             @simd ivdep for j = 1:s
-                dphi[j, k] = dphi[j, p] * phi[j, q] + phi[j, p] * dphi[j, q]
+                dPhi[j, k] = dPhi[j, p] * Phi[j, q] + Phi[j, p] * dPhi[j, q]
             end
         end
     end
-    return dphi
+    return dPhi
 end
 
 
 function pushforward_db!(
-    db::AbstractVector{T}, temp::AbstractVector{T},
-    dphi::AbstractMatrix{T}, b::AbstractVector{T},
-    Q::AbstractMatrix{T}, R::AbstractMatrix{T},
-    output_indices::AbstractVector{Int}
+    db::AbstractVector{T},
+    temp::AbstractVector{T},
+    dPhi::AbstractMatrix{T},
+    b::AbstractVector{T},
+    Q::AbstractMatrix{T},
+    R::AbstractMatrix{T},
+    output_indices::AbstractVector{Int},
 ) where {T}
     s = length(db)
     t = length(temp)
-    @assert s == size(dphi, 1)
+    @assert s == size(dPhi, 1)
     @assert (s,) == size(b)
     @assert (t, s) == size(Q)
     @assert (s, s) == size(R)
@@ -381,7 +377,7 @@ function pushforward_db!(
     @inbounds for (i, k) in enumerate(output_indices)
         overlap = _zero
         for j = 1:s
-            overlap += b[j] * dphi[j, k]
+            overlap += b[j] * dPhi[j, k]
         end
         temp[i] = overlap
     end
@@ -398,15 +394,19 @@ end
 
 
 function pushforward_db!(
-    db::AbstractVector{T}, temp::AbstractVector{T},
-    residuals::AbstractVector{T}, dphi::AbstractMatrix{T},
-    b::AbstractVector{T}, Q::AbstractMatrix{T}, R::AbstractMatrix{T},
-    output_indices::AbstractVector{Int}
+    db::AbstractVector{T},
+    temp::AbstractVector{T},
+    residuals::AbstractVector{T},
+    dPhi::AbstractMatrix{T},
+    b::AbstractVector{T},
+    Q::AbstractMatrix{T},
+    R::AbstractMatrix{T},
+    output_indices::AbstractVector{Int},
 ) where {T}
     s = length(db)
     t = length(temp)
     @assert (t,) == size(residuals)
-    @assert s == size(dphi, 1)
+    @assert s == size(dPhi, 1)
     @assert (s,) == size(b)
     @assert (t, s) == size(Q)
     @assert (s, s) == size(R)
@@ -418,14 +418,14 @@ function pushforward_db!(
     @inbounds for (i, k) in enumerate(output_indices)
         r = residuals[i]
         @simd ivdep for j = 1:s
-            db[j] += r * dphi[j, k]
+            db[j] += r * dPhi[j, k]
         end
     end
     solve_lower_triangular!(db, R)
     @inbounds for (i, k) in enumerate(output_indices)
         overlap = _zero
         for j = 1:s
-            overlap += b[j] * dphi[j, k]
+            overlap += b[j] * dPhi[j, k]
         end
         temp[i] = overlap
     end
@@ -443,18 +443,19 @@ end
 
 function pushforward_dresiduals!(
     dresiduals::AbstractVector{T},
-    b::AbstractVector{T}, dphi::AbstractMatrix{T},
-    output_indices::AbstractVector{Int}
+    b::AbstractVector{T},
+    dPhi::AbstractMatrix{T},
+    output_indices::AbstractVector{Int},
 ) where {T}
     t = length(dresiduals)
     s = length(b)
-    @assert s == size(dphi, 1)
+    @assert s == size(dPhi, 1)
     @assert (t,) == size(output_indices)
     _zero = zero(T)
     @inbounds for (i, k) in enumerate(output_indices)
         doverlap = _zero
         for j = 1:s
-            doverlap += b[j] * dphi[j, k]
+            doverlap += b[j] * dPhi[j, k]
         end
         dresiduals[i] = doverlap
     end
@@ -464,21 +465,23 @@ end
 
 function pushforward_dresiduals!(
     dresiduals::AbstractVector{T},
-    db::AbstractVector{T}, b::AbstractVector{T},
-    dphi::AbstractMatrix{T}, phi::AbstractMatrix{T},
-    output_indices::AbstractVector{Int}
+    db::AbstractVector{T},
+    b::AbstractVector{T},
+    dPhi::AbstractMatrix{T},
+    Phi::AbstractMatrix{T},
+    output_indices::AbstractVector{Int},
 ) where {T}
     t = length(dresiduals)
     s = length(db)
     @assert (s,) == size(b)
-    @assert s == size(dphi, 1)
-    @assert size(dphi) == size(phi)
+    @assert s == size(dPhi, 1)
+    @assert size(dPhi) == size(Phi)
     @assert (t,) == size(output_indices)
     _zero = zero(T)
     @inbounds for (i, k) in enumerate(output_indices)
         doverlap = _zero
         for j = 1:s
-            doverlap += db[j] * phi[j, k] + b[j] * dphi[j, k]
+            doverlap += db[j] * Phi[j, k] + b[j] * dPhi[j, k]
         end
         dresiduals[i] = doverlap
     end
@@ -489,39 +492,39 @@ end
 ############################################ GRADIENT COMPUTATION (REVERSE-MODE)
 
 
-function pullback_dphi_from_residual!(
-    dphi::AbstractMatrix{T}, b::AbstractVector{T},
+function pullback_dPhi_from_residual!(
+    dPhi::AbstractMatrix{T}, b::AbstractVector{T},
     residuals::AbstractVector{T}, source_indices::AbstractVector{Int}
 ) where {T}
-    n, m = size(dphi)
+    n, m = size(dPhi)
     @assert (n,) == size(b)
     @assert (m,) == size(source_indices)
     _zero = zero(T)
     @inbounds for (k, s) in Iterators.reverse(enumerate(source_indices))
         if s == -1
             @simd ivdep for j = 1:n
-                dphi[j, k] = _zero
+                dPhi[j, k] = _zero
             end
         else
             residual = residuals[s]
             twice_residual = residual + residual
             @simd ivdep for j = 1:n
-                dphi[j, k] = twice_residual * b[j]
+                dPhi[j, k] = twice_residual * b[j]
             end
         end
     end
-    return dphi
+    return dPhi
 end
 
 
-function pullback_dphi!(
-    dphi::AbstractMatrix{T}, A::AbstractMatrix{T}, phi::AbstractMatrix{T},
+function pullback_dPhi!(
+    dPhi::AbstractMatrix{T}, A::AbstractMatrix{T}, Phi::AbstractMatrix{T},
     child_indices::AbstractVector{Int},
     sibling_ranges::AbstractVector{UnitRange{Int}},
     sibling_indices::AbstractVector{Pair{Int,Int}}
 ) where {T}
-    n, m = size(dphi)
-    @assert (n, m) == size(phi)
+    n, m = size(dPhi)
+    @assert (n, m) == size(Phi)
     @assert (n, n) == size(A)
     @assert (m,) == size(child_indices)
     @assert (m,) == size(sibling_ranges)
@@ -529,30 +532,30 @@ function pullback_dphi!(
         c = child_indices[k]
         if c != -1
             for j = 1:n
-                temp = dphi[j, k]
+                temp = dPhi[j, k]
                 for i = 1:n
-                    temp += A[i, j] * dphi[i, c]
+                    temp += A[i, j] * dPhi[i, c]
                 end
-                dphi[j, k] = temp
+                dPhi[j, k] = temp
             end
         end
         for i in sibling_ranges[k]
             (p, q) = sibling_indices[i]
             @simd ivdep for j = 1:n
-                dphi[j, k] += phi[j, p] * dphi[j, q]
+                dPhi[j, k] += Phi[j, p] * dPhi[j, q]
             end
         end
     end
-    return dphi
+    return dPhi
 end
 
 
 function pullback_dA!(
-    dA::AbstractMatrix{T}, phi::AbstractMatrix{T}, dphi::AbstractMatrix{T},
+    dA::AbstractMatrix{T}, Phi::AbstractMatrix{T}, dPhi::AbstractMatrix{T},
     child_indices::AbstractVector{Int}
 ) where {T}
-    n, m = size(phi)
-    @assert (n, m) == size(dphi)
+    n, m = size(Phi)
+    @assert (n, m) == size(dPhi)
     @assert (n, n) == size(dA)
     @assert (m,) == size(child_indices)
     _zero = zero(T)
@@ -564,9 +567,9 @@ function pullback_dA!(
     @inbounds for (k, c) in enumerate(child_indices)
         if c != -1
             for t = 1:n
-                f = phi[t, k]
+                f = Phi[t, k]
                 @simd ivdep for s = 1:n
-                    dA[s, t] += f * dphi[s, c]
+                    dA[s, t] += f * dPhi[s, c]
                 end
             end
         end
@@ -576,12 +579,12 @@ end
 
 
 function pullback_db!(
-    db::AbstractVector{T}, phi::AbstractMatrix{T},
+    db::AbstractVector{T}, Phi::AbstractMatrix{T},
     residuals::AbstractVector{T}, output_indices::AbstractVector{Int}
 ) where {T}
     n = length(db)
     m = length(residuals)
-    @assert n == size(phi, 1)
+    @assert n == size(Phi, 1)
     @assert m == length(output_indices)
     _zero = zero(T)
     @inbounds begin
@@ -591,7 +594,7 @@ function pullback_db!(
         for (i, k) in enumerate(output_indices)
             r = residuals[i]
             @simd ivdep for j = 1:n
-                db[j] += r * phi[j, k]
+                db[j] += r * Phi[j, k]
             end
         end
         @simd ivdep for i = 1:n
@@ -962,15 +965,15 @@ end
 
 
 function populate_Q!(
-    Q::AbstractMatrix{T}, phi::AbstractMatrix{T},
+    Q::AbstractMatrix{T}, Phi::AbstractMatrix{T},
     output_indices::AbstractVector{Int}
 ) where {T}
     t, s = size(Q)
-    @assert s == size(phi, 1)
+    @assert s == size(Phi, 1)
     @assert (t,) == size(output_indices)
     for (i, k) in enumerate(output_indices)
         @simd ivdep for j = 1:s
-            @inbounds Q[i, j] = phi[j, k]
+            @inbounds Q[i, j] = Phi[j, k]
         end
     end
 end
@@ -987,8 +990,8 @@ end
 
 # function (ev::RKOCEvaluatorAE{T})(x::Vector{T}) where {T}
 #     reshape_explicit!(ev.A, x)
-#     compute_phi!(ev.phi, ev.A, ev.table.instructions)
-#     populate_Q!(ev.Q, ev.phi, ev.table.output_indices)
+#     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
+#     populate_Q!(ev.Q, ev.Phi, ev.table.output_indices)
 #     gram_schmidt_qr!(ev.Q)
 #     compute_residuals!(ev.residuals, ev.Q, ev.inv_gamma)
 #     return residual_norm_squared(ev.residuals)
@@ -997,8 +1000,8 @@ end
 
 # function (ev::RKOCEvaluatorAD{T})(x::Vector{T}) where {T}
 #     reshape_diagonally_implicit!(ev.A, x)
-#     compute_phi!(ev.phi, ev.A, ev.table.instructions)
-#     populate_Q!(ev.Q, ev.phi, ev.table.output_indices)
+#     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
+#     populate_Q!(ev.Q, ev.Phi, ev.table.output_indices)
 #     gram_schmidt_qr!(ev.Q)
 #     compute_residuals!(ev.residuals, ev.Q, ev.inv_gamma)
 #     return residual_norm_squared(ev.residuals)
@@ -1007,8 +1010,8 @@ end
 
 # function (ev::RKOCEvaluatorAI{T})(x::Vector{T}) where {T}
 #     reshape_implicit!(ev.A, x)
-#     compute_phi!(ev.phi, ev.A, ev.table.instructions)
-#     populate_Q!(ev.Q, ev.phi, ev.table.output_indices)
+#     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
+#     populate_Q!(ev.Q, ev.Phi, ev.table.output_indices)
 #     gram_schmidt_qr!(ev.Q)
 #     compute_residuals!(ev.residuals, ev.Q, ev.inv_gamma)
 #     return residual_norm_squared(ev.residuals)
@@ -1017,27 +1020,27 @@ end
 
 # function (ev::RKOCEvaluatorBE{T})(x::Vector{T}) where {T}
 #     reshape_explicit!(ev.A, ev.b, x)
-#     compute_phi!(ev.phi, ev.A, ev.table.instructions)
+#     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
 #     compute_residuals!(ev.residuals,
-#         ev.b, ev.phi, ev.inv_gamma, ev.table.output_indices)
+#         ev.b, ev.Phi, ev.inv_gamma, ev.table.output_indices)
 #     return residual_norm_squared(ev.residuals)
 # end
 
 
 # function (ev::RKOCEvaluatorBD{T})(x::Vector{T}) where {T}
 #     reshape_diagonally_implicit!(ev.A, ev.b, x)
-#     compute_phi!(ev.phi, ev.A, ev.table.instructions)
+#     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
 #     compute_residuals!(ev.residuals,
-#         ev.b, ev.phi, ev.inv_gamma, ev.table.output_indices)
+#         ev.b, ev.Phi, ev.inv_gamma, ev.table.output_indices)
 #     return residual_norm_squared(ev.residuals)
 # end
 
 
 # function (ev::RKOCEvaluatorBI{T})(x::Vector{T}) where {T}
 #     reshape_implicit!(ev.A, ev.b, x)
-#     compute_phi!(ev.phi, ev.A, ev.table.instructions)
+#     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
 #     compute_residuals!(ev.residuals,
-#         ev.b, ev.phi, ev.inv_gamma, ev.table.output_indices)
+#         ev.b, ev.Phi, ev.inv_gamma, ev.table.output_indices)
 #     return residual_norm_squared(ev.residuals)
 # end
 
@@ -1046,8 +1049,8 @@ end
 #     residuals::Vector{T}, x::Vector{T}
 # ) where {T}
 #     reshape_explicit!(ev.A, x)
-#     compute_phi!(ev.phi, ev.A, ev.table.instructions)
-#     populate_Q!(ev.Q, ev.phi, ev.table.output_indices)
+#     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
+#     populate_Q!(ev.Q, ev.Phi, ev.table.output_indices)
 #     gram_schmidt_qr!(ev.Q)
 #     compute_residuals!(residuals, ev.Q, ev.inv_gamma)
 #     return residuals
@@ -1058,8 +1061,8 @@ end
 #     residuals::Vector{T}, x::Vector{T}
 # ) where {T}
 #     reshape_diagonally_implicit!(ev.A, x)
-#     compute_phi!(ev.phi, ev.A, ev.table.instructions)
-#     populate_Q!(ev.Q, ev.phi, ev.table.output_indices)
+#     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
+#     populate_Q!(ev.Q, ev.Phi, ev.table.output_indices)
 #     gram_schmidt_qr!(ev.Q)
 #     compute_residuals!(residuals, ev.Q, ev.inv_gamma)
 #     return residuals
@@ -1070,8 +1073,8 @@ end
 #     residuals::Vector{T}, x::Vector{T}
 # ) where {T}
 #     reshape_implicit!(ev.A, x)
-#     compute_phi!(ev.phi, ev.A, ev.table.instructions)
-#     populate_Q!(ev.Q, ev.phi, ev.table.output_indices)
+#     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
+#     populate_Q!(ev.Q, ev.Phi, ev.table.output_indices)
 #     gram_schmidt_qr!(ev.Q)
 #     compute_residuals!(residuals, ev.Q, ev.inv_gamma)
 #     return residuals
@@ -1082,9 +1085,9 @@ end
 #     residuals::Vector{T}, x::Vector{T}
 # ) where {T}
 #     reshape_explicit!(ev.A, ev.b, x)
-#     compute_phi!(ev.phi, ev.A, ev.table.instructions)
+#     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
 #     compute_residuals!(residuals,
-#         ev.b, ev.phi, ev.inv_gamma, ev.table.output_indices)
+#         ev.b, ev.Phi, ev.inv_gamma, ev.table.output_indices)
 #     return residuals
 # end
 
@@ -1093,9 +1096,9 @@ end
 #     residuals::Vector{T}, x::Vector{T}
 # ) where {T}
 #     reshape_diagonally_implicit!(ev.A, ev.b, x)
-#     compute_phi!(ev.phi, ev.A, ev.table.instructions)
+#     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
 #     compute_residuals!(residuals,
-#         ev.b, ev.phi, ev.inv_gamma, ev.table.output_indices)
+#         ev.b, ev.Phi, ev.inv_gamma, ev.table.output_indices)
 #     return residuals
 # end
 
@@ -1104,9 +1107,9 @@ end
 #     residuals::Vector{T}, x::Vector{T}
 # ) where {T}
 #     reshape_implicit!(ev.A, ev.b, x)
-#     compute_phi!(ev.phi, ev.A, ev.table.instructions)
+#     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
 #     compute_residuals!(residuals,
-#         ev.b, ev.phi, ev.inv_gamma, ev.table.output_indices)
+#         ev.b, ev.Phi, ev.inv_gamma, ev.table.output_indices)
 #     return residuals
 # end
 
@@ -1191,19 +1194,19 @@ end
 
 # function (adj::RKOCEvaluatorAEAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
 #     reshape_explicit!(adj.ev.A, x)
-#     compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
-#     populate_Q!(adj.ev.Q, adj.ev.phi, adj.ev.table.output_indices)
+#     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
+#     populate_Q!(adj.ev.Q, adj.ev.Phi, adj.ev.table.output_indices)
 #     gram_schmidt_qr!(adj.ev.Q, adj.ev.R)
 #     compute_residuals_and_b!(adj.ev.residuals, adj.ev.b,
 #         adj.ev.Q, adj.ev.inv_gamma)
 #     solve_upper_triangular!(adj.ev.b, adj.ev.R)
-#     pullback_dphi_from_residual!(adj.ev.dphi,
+#     pullback_dPhi_from_residual!(adj.ev.dPhi,
 #         adj.ev.b, adj.ev.residuals, adj.ev.table.source_indices)
-#     pullback_dphi!(adj.ev.dphi,
-#         adj.ev.A, adj.ev.phi, adj.ev.table.child_indices,
+#     pullback_dPhi!(adj.ev.dPhi,
+#         adj.ev.A, adj.ev.Phi, adj.ev.table.child_indices,
 #         adj.ev.table.sibling_ranges, adj.ev.table.sibling_indices)
 #     pullback_dA!(adj.ev.dA,
-#         adj.ev.phi, adj.ev.dphi, adj.ev.table.child_indices)
+#         adj.ev.Phi, adj.ev.dPhi, adj.ev.table.child_indices)
 #     reshape_explicit!(g, adj.ev.dA)
 #     return g
 # end
@@ -1211,19 +1214,19 @@ end
 
 # function (adj::RKOCEvaluatorADAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
 #     reshape_diagonally_implicit!(adj.ev.A, x)
-#     compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
-#     populate_Q!(adj.ev.Q, adj.ev.phi, adj.ev.table.output_indices)
+#     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
+#     populate_Q!(adj.ev.Q, adj.ev.Phi, adj.ev.table.output_indices)
 #     gram_schmidt_qr!(adj.ev.Q, adj.ev.R)
 #     compute_residuals_and_b!(adj.ev.residuals, adj.ev.b,
 #         adj.ev.Q, adj.ev.inv_gamma)
 #     solve_upper_triangular!(adj.ev.b, adj.ev.R)
-#     pullback_dphi_from_residual!(adj.ev.dphi,
+#     pullback_dPhi_from_residual!(adj.ev.dPhi,
 #         adj.ev.b, adj.ev.residuals, adj.ev.table.source_indices)
-#     pullback_dphi!(adj.ev.dphi,
-#         adj.ev.A, adj.ev.phi, adj.ev.table.child_indices,
+#     pullback_dPhi!(adj.ev.dPhi,
+#         adj.ev.A, adj.ev.Phi, adj.ev.table.child_indices,
 #         adj.ev.table.sibling_ranges, adj.ev.table.sibling_indices)
 #     pullback_dA!(adj.ev.dA,
-#         adj.ev.phi, adj.ev.dphi, adj.ev.table.child_indices)
+#         adj.ev.Phi, adj.ev.dPhi, adj.ev.table.child_indices)
 #     reshape_diagonally_implicit!(g, adj.ev.dA)
 #     return g
 # end
@@ -1231,19 +1234,19 @@ end
 
 # function (adj::RKOCEvaluatorAIAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
 #     reshape_implicit!(adj.ev.A, x)
-#     compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
-#     populate_Q!(adj.ev.Q, adj.ev.phi, adj.ev.table.output_indices)
+#     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
+#     populate_Q!(adj.ev.Q, adj.ev.Phi, adj.ev.table.output_indices)
 #     gram_schmidt_qr!(adj.ev.Q, adj.ev.R)
 #     compute_residuals_and_b!(adj.ev.residuals, adj.ev.b,
 #         adj.ev.Q, adj.ev.inv_gamma)
 #     solve_upper_triangular!(adj.ev.b, adj.ev.R)
-#     pullback_dphi_from_residual!(adj.ev.dphi,
+#     pullback_dPhi_from_residual!(adj.ev.dPhi,
 #         adj.ev.b, adj.ev.residuals, adj.ev.table.source_indices)
-#     pullback_dphi!(adj.ev.dphi,
-#         adj.ev.A, adj.ev.phi, adj.ev.table.child_indices,
+#     pullback_dPhi!(adj.ev.dPhi,
+#         adj.ev.A, adj.ev.Phi, adj.ev.table.child_indices,
 #         adj.ev.table.sibling_ranges, adj.ev.table.sibling_indices)
 #     pullback_dA!(adj.ev.dA,
-#         adj.ev.phi, adj.ev.dphi, adj.ev.table.child_indices)
+#         adj.ev.Phi, adj.ev.dPhi, adj.ev.table.child_indices)
 #     reshape_implicit!(g, adj.ev.dA)
 #     return g
 # end
@@ -1251,18 +1254,18 @@ end
 
 # function (adj::RKOCEvaluatorBEAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
 #     reshape_explicit!(adj.ev.A, adj.ev.b, x)
-#     compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
+#     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
 #     compute_residuals!(adj.ev.residuals,
-#         adj.ev.b, adj.ev.phi, adj.ev.inv_gamma, adj.ev.table.output_indices)
-#     pullback_dphi_from_residual!(adj.ev.dphi,
+#         adj.ev.b, adj.ev.Phi, adj.ev.inv_gamma, adj.ev.table.output_indices)
+#     pullback_dPhi_from_residual!(adj.ev.dPhi,
 #         adj.ev.b, adj.ev.residuals, adj.ev.table.source_indices)
-#     pullback_dphi!(adj.ev.dphi,
-#         adj.ev.A, adj.ev.phi, adj.ev.table.child_indices,
+#     pullback_dPhi!(adj.ev.dPhi,
+#         adj.ev.A, adj.ev.Phi, adj.ev.table.child_indices,
 #         adj.ev.table.sibling_ranges, adj.ev.table.sibling_indices)
 #     pullback_dA!(adj.ev.dA,
-#         adj.ev.phi, adj.ev.dphi, adj.ev.table.child_indices)
+#         adj.ev.Phi, adj.ev.dPhi, adj.ev.table.child_indices)
 #     pullback_db!(adj.ev.db,
-#         adj.ev.phi, adj.ev.residuals, adj.ev.table.output_indices)
+#         adj.ev.Phi, adj.ev.residuals, adj.ev.table.output_indices)
 #     reshape_explicit!(g, adj.ev.dA, adj.ev.db)
 #     return g
 # end
@@ -1270,18 +1273,18 @@ end
 
 # function (adj::RKOCEvaluatorBDAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
 #     reshape_diagonally_implicit!(adj.ev.A, adj.ev.b, x)
-#     compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
+#     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
 #     compute_residuals!(adj.ev.residuals,
-#         adj.ev.b, adj.ev.phi, adj.ev.inv_gamma, adj.ev.table.output_indices)
-#     pullback_dphi_from_residual!(adj.ev.dphi,
+#         adj.ev.b, adj.ev.Phi, adj.ev.inv_gamma, adj.ev.table.output_indices)
+#     pullback_dPhi_from_residual!(adj.ev.dPhi,
 #         adj.ev.b, adj.ev.residuals, adj.ev.table.source_indices)
-#     pullback_dphi!(adj.ev.dphi,
-#         adj.ev.A, adj.ev.phi, adj.ev.table.child_indices,
+#     pullback_dPhi!(adj.ev.dPhi,
+#         adj.ev.A, adj.ev.Phi, adj.ev.table.child_indices,
 #         adj.ev.table.sibling_ranges, adj.ev.table.sibling_indices)
 #     pullback_dA!(adj.ev.dA,
-#         adj.ev.phi, adj.ev.dphi, adj.ev.table.child_indices)
+#         adj.ev.Phi, adj.ev.dPhi, adj.ev.table.child_indices)
 #     pullback_db!(adj.ev.db,
-#         adj.ev.phi, adj.ev.residuals, adj.ev.table.output_indices)
+#         adj.ev.Phi, adj.ev.residuals, adj.ev.table.output_indices)
 #     reshape_diagonally_implicit!(g, adj.ev.dA, adj.ev.db)
 #     return g
 # end
@@ -1289,18 +1292,18 @@ end
 
 # function (adj::RKOCEvaluatorBIAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
 #     reshape_implicit!(adj.ev.A, adj.ev.b, x)
-#     compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
+#     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
 #     compute_residuals!(adj.ev.residuals,
-#         adj.ev.b, adj.ev.phi, adj.ev.inv_gamma, adj.ev.table.output_indices)
-#     pullback_dphi_from_residual!(adj.ev.dphi,
+#         adj.ev.b, adj.ev.Phi, adj.ev.inv_gamma, adj.ev.table.output_indices)
+#     pullback_dPhi_from_residual!(adj.ev.dPhi,
 #         adj.ev.b, adj.ev.residuals, adj.ev.table.source_indices)
-#     pullback_dphi!(adj.ev.dphi,
-#         adj.ev.A, adj.ev.phi, adj.ev.table.child_indices,
+#     pullback_dPhi!(adj.ev.dPhi,
+#         adj.ev.A, adj.ev.Phi, adj.ev.table.child_indices,
 #         adj.ev.table.sibling_ranges, adj.ev.table.sibling_indices)
 #     pullback_dA!(adj.ev.dA,
-#         adj.ev.phi, adj.ev.dphi, adj.ev.table.child_indices)
+#         adj.ev.Phi, adj.ev.dPhi, adj.ev.table.child_indices)
 #     pullback_db!(adj.ev.db,
-#         adj.ev.phi, adj.ev.residuals, adj.ev.table.output_indices)
+#         adj.ev.Phi, adj.ev.residuals, adj.ev.table.output_indices)
 #     reshape_implicit!(g, adj.ev.dA, adj.ev.db)
 #     return g
 # end
@@ -1312,8 +1315,8 @@ end
 #     @assert length(adj.ev.table.output_indices) == size(jacobian, 1)
 #     @assert length(x) == size(jacobian, 2)
 #     reshape_explicit!(adj.ev.A, x)
-#     compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
-#     populate_Q!(adj.ev.Q, adj.ev.phi, adj.ev.table.output_indices)
+#     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
+#     populate_Q!(adj.ev.Q, adj.ev.Phi, adj.ev.table.output_indices)
 #     gram_schmidt_qr!(adj.ev.Q, adj.ev.R)
 #     compute_residuals_and_b!(adj.ev.residuals, adj.ev.b,
 #         adj.ev.Q, adj.ev.inv_gamma)
@@ -1322,14 +1325,14 @@ end
 #     k = 1
 #     for i = 2:s
 #         for j = 1:i-1
-#             pushforward_dphi!(adj.ev.dphi,
-#                 adj.ev.phi, adj.ev.A, i, j, adj.ev.table.instructions)
+#             pushforward_dPhi!(adj.ev.dPhi,
+#                 adj.ev.Phi, adj.ev.A, i, j, adj.ev.table.instructions)
 #             column = view(jacobian, :, k)
 #             pushforward_db!(adj.ev.db, column,
-#                 adj.ev.residuals, adj.ev.dphi, adj.ev.b, adj.ev.Q, adj.ev.R,
+#                 adj.ev.residuals, adj.ev.dPhi, adj.ev.b, adj.ev.Q, adj.ev.R,
 #                 adj.ev.table.output_indices)
 #             pushforward_dresiduals!(column,
-#                 adj.ev.db, adj.ev.b, adj.ev.dphi, adj.ev.phi,
+#                 adj.ev.db, adj.ev.b, adj.ev.dPhi, adj.ev.Phi,
 #                 adj.ev.table.output_indices)
 #             k += 1
 #         end
@@ -1344,8 +1347,8 @@ end
 #     @assert length(adj.ev.table.output_indices) == size(jacobian, 1)
 #     @assert length(x) == size(jacobian, 2)
 #     reshape_diagonally_implicit!(adj.ev.A, x)
-#     compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
-#     populate_Q!(adj.ev.Q, adj.ev.phi, adj.ev.table.output_indices)
+#     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
+#     populate_Q!(adj.ev.Q, adj.ev.Phi, adj.ev.table.output_indices)
 #     gram_schmidt_qr!(adj.ev.Q, adj.ev.R)
 #     compute_residuals_and_b!(adj.ev.residuals, adj.ev.b,
 #         adj.ev.Q, adj.ev.inv_gamma)
@@ -1354,14 +1357,14 @@ end
 #     k = 1
 #     for i = 1:s
 #         for j = 1:i
-#             pushforward_dphi!(adj.ev.dphi,
-#                 adj.ev.phi, adj.ev.A, i, j, adj.ev.table.instructions)
+#             pushforward_dPhi!(adj.ev.dPhi,
+#                 adj.ev.Phi, adj.ev.A, i, j, adj.ev.table.instructions)
 #             column = view(jacobian, :, k)
 #             pushforward_db!(adj.ev.db, column,
-#                 adj.ev.residuals, adj.ev.dphi, adj.ev.b, adj.ev.Q, adj.ev.R,
+#                 adj.ev.residuals, adj.ev.dPhi, adj.ev.b, adj.ev.Q, adj.ev.R,
 #                 adj.ev.table.output_indices)
 #             pushforward_dresiduals!(column,
-#                 adj.ev.db, adj.ev.b, adj.ev.dphi, adj.ev.phi,
+#                 adj.ev.db, adj.ev.b, adj.ev.dPhi, adj.ev.Phi,
 #                 adj.ev.table.output_indices)
 #             k += 1
 #         end
@@ -1376,8 +1379,8 @@ end
 #     @assert length(adj.ev.table.output_indices) == size(jacobian, 1)
 #     @assert length(x) == size(jacobian, 2)
 #     reshape_implicit!(adj.ev.A, x)
-#     compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
-#     populate_Q!(adj.ev.Q, adj.ev.phi, adj.ev.table.output_indices)
+#     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
+#     populate_Q!(adj.ev.Q, adj.ev.Phi, adj.ev.table.output_indices)
 #     gram_schmidt_qr!(adj.ev.Q, adj.ev.R)
 #     compute_residuals_and_b!(adj.ev.residuals, adj.ev.b,
 #         adj.ev.Q, adj.ev.inv_gamma)
@@ -1386,14 +1389,14 @@ end
 #     k = 1
 #     for i = 1:s
 #         for j = 1:s
-#             pushforward_dphi!(adj.ev.dphi,
-#                 adj.ev.phi, adj.ev.A, i, j, adj.ev.table.instructions)
+#             pushforward_dPhi!(adj.ev.dPhi,
+#                 adj.ev.Phi, adj.ev.A, i, j, adj.ev.table.instructions)
 #             column = view(jacobian, :, k)
 #             pushforward_db!(adj.ev.db, column,
-#                 adj.ev.residuals, adj.ev.dphi, adj.ev.b, adj.ev.Q, adj.ev.R,
+#                 adj.ev.residuals, adj.ev.dPhi, adj.ev.b, adj.ev.Q, adj.ev.R,
 #                 adj.ev.table.output_indices)
 #             pushforward_dresiduals!(column,
-#                 adj.ev.db, adj.ev.b, adj.ev.dphi, adj.ev.phi,
+#                 adj.ev.db, adj.ev.b, adj.ev.dPhi, adj.ev.Phi,
 #                 adj.ev.table.output_indices)
 #             k += 1
 #         end
@@ -1408,21 +1411,21 @@ end
 #     @assert length(adj.ev.table.output_indices) == size(jacobian, 1)
 #     @assert length(x) == size(jacobian, 2)
 #     reshape_explicit!(adj.ev.A, adj.ev.b, x)
-#     compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
+#     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
 #     s = length(adj.ev.b)
 #     k = 1
 #     for i = 2:s
 #         for j = 1:i-1
-#             pushforward_dphi!(adj.ev.dphi,
-#                 adj.ev.phi, adj.ev.A, i, j, adj.ev.table.instructions)
+#             pushforward_dPhi!(adj.ev.dPhi,
+#                 adj.ev.Phi, adj.ev.A, i, j, adj.ev.table.instructions)
 #             pushforward_dresiduals!(view(jacobian, :, k),
-#                 adj.ev.b, adj.ev.dphi, adj.ev.table.output_indices)
+#                 adj.ev.b, adj.ev.dPhi, adj.ev.table.output_indices)
 #             k += 1
 #         end
 #     end
 #     for j = 1:s
 #         for (i, m) in enumerate(adj.ev.table.output_indices)
-#             @inbounds jacobian[i, k] = adj.ev.phi[j, m]
+#             @inbounds jacobian[i, k] = adj.ev.Phi[j, m]
 #         end
 #         k += 1
 #     end
@@ -1436,21 +1439,21 @@ end
 #     @assert length(adj.ev.table.output_indices) == size(jacobian, 1)
 #     @assert length(x) == size(jacobian, 2)
 #     reshape_diagonally_implicit!(adj.ev.A, adj.ev.b, x)
-#     compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
+#     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
 #     s = length(adj.ev.b)
 #     k = 1
 #     for i = 1:s
 #         for j = 1:i
-#             pushforward_dphi!(adj.ev.dphi,
-#                 adj.ev.phi, adj.ev.A, i, j, adj.ev.table.instructions)
+#             pushforward_dPhi!(adj.ev.dPhi,
+#                 adj.ev.Phi, adj.ev.A, i, j, adj.ev.table.instructions)
 #             pushforward_dresiduals!(view(jacobian, :, k),
-#                 adj.ev.b, adj.ev.dphi, adj.ev.table.output_indices)
+#                 adj.ev.b, adj.ev.dPhi, adj.ev.table.output_indices)
 #             k += 1
 #         end
 #     end
 #     for j = 1:s
 #         for (i, m) in enumerate(adj.ev.table.output_indices)
-#             @inbounds jacobian[i, k] = adj.ev.phi[j, m]
+#             @inbounds jacobian[i, k] = adj.ev.Phi[j, m]
 #         end
 #         k += 1
 #     end
@@ -1464,21 +1467,21 @@ end
 #     @assert length(adj.ev.table.output_indices) == size(jacobian, 1)
 #     @assert length(x) == size(jacobian, 2)
 #     reshape_implicit!(adj.ev.A, adj.ev.b, x)
-#     compute_phi!(adj.ev.phi, adj.ev.A, adj.ev.table.instructions)
+#     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
 #     s = length(adj.ev.b)
 #     k = 1
 #     for i = 1:s
 #         for j = 1:s
-#             pushforward_dphi!(adj.ev.dphi,
-#                 adj.ev.phi, adj.ev.A, i, j, adj.ev.table.instructions)
+#             pushforward_dPhi!(adj.ev.dPhi,
+#                 adj.ev.Phi, adj.ev.A, i, j, adj.ev.table.instructions)
 #             pushforward_dresiduals!(view(jacobian, :, k),
-#                 adj.ev.b, adj.ev.dphi, adj.ev.table.output_indices)
+#                 adj.ev.b, adj.ev.dPhi, adj.ev.table.output_indices)
 #             k += 1
 #         end
 #     end
 #     for j = 1:s
 #         for (i, m) in enumerate(adj.ev.table.output_indices)
-#             @inbounds jacobian[i, k] = adj.ev.phi[j, m]
+#             @inbounds jacobian[i, k] = adj.ev.Phi[j, m]
 #         end
 #         k += 1
 #     end

@@ -1,0 +1,14 @@
+{
+    "runOnSave.commands": [
+        {
+            "globMatch": "**/*.jl",
+            "command": "julia --project docs/make.jl",
+            "async": false
+        },
+        {
+            "globMatch": "**/*.md",
+            "command": "julia --project docs/make.jl",
+            "async": false
+        }
+    ]
+}
