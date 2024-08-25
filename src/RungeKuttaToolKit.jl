@@ -200,15 +200,49 @@ function compute_residuals!(
     # Compute residuals.
     @inbounds for (i, k) in pairs(selected_indices)
         # Compute dot product without SIMD for determinism.
-        overlap = _zero
+        residual = _zero
         for j in stage_indices
-            overlap += b[j] * Phi[j, k]
+            residual += b[j] * Phi[j, k]
         end
         # Subtract inv_gamma[i] at the end for improved numerical stability.
-        residuals[i] = overlap - inv_gamma[i]
+        residuals[i] = residual - inv_gamma[i]
     end
 
     return residuals
+end
+
+
+function compute_residual_sum_of_squares(
+    b::AbstractVector{T},
+    Phi::AbstractMatrix{T},
+    inv_gamma::AbstractVector{T},
+    selected_indices::AbstractVector{Int},
+) where {T}
+
+    # Validate array dimensions.
+    stage_indices = axes(b, 1)
+    internal_indices = axes(Phi, 2)
+    output_indices = axes(inv_gamma, 1)
+    @assert axes(b) == (stage_indices,)
+    @assert axes(Phi) == (stage_indices, internal_indices)
+    @assert axes(inv_gamma) == (output_indices,)
+    @assert axes(selected_indices) == (output_indices,)
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    result = _zero
+    @inbounds for (i, k) in pairs(selected_indices)
+        # Compute dot product without SIMD for determinism.
+        residual = _zero
+        for j in stage_indices
+            residual += b[j] * Phi[j, k]
+        end
+        residual -= inv_gamma[i]
+        result += abs2(residual)
+    end
+
+    return result
 end
 
 
