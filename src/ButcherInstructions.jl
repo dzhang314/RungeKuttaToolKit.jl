@@ -444,7 +444,8 @@ end
 """
 function build_instructions(
     trees::Vector{LevelSequence};
-    optimize::Bool=true, sort_by_depth::Bool=true
+    optimize::Bool=true,
+    sort_by_depth::Bool=true,
 )
     @assert allunique(trees)
     instructions = ButcherInstruction[]
@@ -492,45 +493,46 @@ end
 
 struct ButcherInstructionTable
     instructions::Vector{ButcherInstruction}
-    output_indices::Vector{Int}
+    selected_indices::Vector{Int}
     source_indices::Vector{Int}
-    child_indices::Vector{Int}
-    sibling_indices::Vector{Pair{Int,Int}}
-    sibling_ranges::Vector{UnitRange{Int}}
+    extension_indices::Vector{Int}
+    rooted_sum_indices::Vector{Pair{Int,Int}}
+    rooted_sum_ranges::Vector{UnitRange{Int}}
 end
 
 
-function compute_children_siblings(instructions::Vector{ButcherInstruction})
-    children = [NULL_INDEX for _ in instructions]
-    siblings = [Pair{Int,Int}[] for _ in instructions]
-    for (i, instruction) in enumerate(instructions)
+function compute_reverse_relationships(instructions::Vector{ButcherInstruction})
+    extensions = [NULL_INDEX for _ in instructions]
+    rooted_sums = [Pair{Int,Int}[] for _ in instructions]
+    for (i, instruction) in pairs(instructions)
         if instruction.left == NULL_INDEX
             @assert instruction.right == NULL_INDEX
         elseif instruction.right == NULL_INDEX
-            children[instruction.left] = i
+            extensions[instruction.left] = i
         else
-            push!(siblings[instruction.left], instruction.right => i)
-            push!(siblings[instruction.right], instruction.left => i)
+            push!(rooted_sums[instruction.left], instruction.right => i)
+            push!(rooted_sums[instruction.right], instruction.left => i)
         end
     end
-    return (children, siblings)
+    return (extensions, rooted_sums)
 end
 
 
 function ButcherInstructionTable(trees::Vector{LevelSequence})
-    instructions, output_indices = build_instructions(trees)
+    instructions, selected_indices = build_instructions(trees)
     source_indices = [NULL_INDEX for _ in instructions]
-    for (i, j) in enumerate(output_indices)
+    for (i, j) in pairs(selected_indices)
         source_indices[j] = i
     end
-    child_indices, sibling_lists = compute_children_siblings(instructions)
-    sibling_indices = reduce(vcat, sibling_lists)
-    end_indices = cumsum(length.(sibling_lists))
+    extension_indices, rooted_sum_lists =
+        compute_reverse_relationships(instructions)
+    rooted_sum_indices = reduce(vcat, rooted_sum_lists)
+    end_indices = cumsum(length.(rooted_sum_lists))
     start_indices = vcat([1], end_indices[1:end-1] .+ 1)
-    sibling_ranges = UnitRange{Int}.(start_indices, end_indices)
+    rooted_sum_ranges = UnitRange{Int}.(start_indices, end_indices)
     return ButcherInstructionTable(
-        instructions, output_indices, source_indices,
-        child_indices, sibling_indices, sibling_ranges)
+        instructions, selected_indices, source_indices,
+        extension_indices, rooted_sum_indices, rooted_sum_ranges)
 end
 
 

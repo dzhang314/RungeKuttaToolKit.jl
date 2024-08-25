@@ -98,10 +98,10 @@ function compute_Phi!(
 
     # Validate array dimensions.
     stage_indices = axes(Phi, 1)
-    instruction_indices = axes(Phi, 2)
-    @assert axes(Phi) == (stage_indices, instruction_indices)
+    internal_indices = axes(Phi, 2)
+    @assert axes(Phi) == (stage_indices, internal_indices)
     @assert axes(A) == (stage_indices, stage_indices)
-    @assert axes(instructions) == (instruction_indices,)
+    @assert axes(instructions) == (internal_indices,)
 
     # Construct numeric constants.
     _zero = zero(T)
@@ -148,7 +148,7 @@ end
         b::AbstractVector{T},
         Phi::AbstractMatrix{T},
         inv_gamma::AbstractVector{T},
-        desired_indices::AbstractVector{Int},
+        selected_indices::AbstractVector{Int},
     ) where {T}
 
 Compute residuals ``\\{ \\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t) :
@@ -160,7 +160,7 @@ density values ``1/\\gamma(t)``.
 - `residuals`: length ``N_{\\text{output}}`` output vector. Each residual
     ``\\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t)`` is written to
     `residuals[i]`, where ``t`` is the rooted tree whose Butcher weight vector
-    is precomputed in `Phi[:, desired_indices[i]]`.
+    is precomputed in `Phi[:, selected_indices[i]]`.
 - `b`: length ``s`` input vector containing Runge--Kutta weights.
 - `Phi`: ``s \\times N_{\\text{internal}}`` input matrix containing
     precomputed Butcher weight vectors ``\\Phi_t(A)``. `Phi` may contain
@@ -168,7 +168,7 @@ density values ``1/\\gamma(t)``.
     ``T``. This is necessary when ``T`` contains a tree but not its subtrees.
 - `inv_gamma`: length ``N_{\\text{output}}`` input vector containing
     precomputed Butcher density values.
-- `desired_indices`: length ``N_{\\text{output}}`` input vector of indices
+- `selected_indices`: length ``N_{\\text{output}}`` input vector of indices
     in the range ``1:N_{\\text{internal}}`` specifying Butcher weight
     vectors in `Phi` corresponding to rooted trees in ``T``.
 
@@ -181,24 +181,24 @@ function compute_residuals!(
     b::AbstractVector{T},
     Phi::AbstractMatrix{T},
     inv_gamma::AbstractVector{T},
-    desired_indices::AbstractVector{Int},
+    selected_indices::AbstractVector{Int},
 ) where {T}
 
     # Validate array dimensions.
-    residual_indices = axes(residuals, 1)
+    output_indices = axes(residuals, 1)
     stage_indices = axes(b, 1)
     internal_indices = axes(Phi, 2)
-    @assert axes(residuals) == (residual_indices,)
+    @assert axes(residuals) == (output_indices,)
     @assert axes(b) == (stage_indices,)
     @assert axes(Phi) == (stage_indices, internal_indices)
-    @assert axes(inv_gamma) == (residual_indices,)
-    @assert axes(desired_indices) == (residual_indices,)
+    @assert axes(inv_gamma) == (output_indices,)
+    @assert axes(selected_indices) == (output_indices,)
 
     # Construct numeric constants.
     _zero = zero(T)
 
-    # Iterate over output indices.
-    @inbounds for (i, k) in pairs(desired_indices)
+    # Compute residuals.
+    @inbounds for (i, k) in pairs(selected_indices)
         # Compute dot product without SIMD for determinism.
         overlap = _zero
         for j in stage_indices
@@ -212,68 +212,82 @@ function compute_residuals!(
 end
 
 
-# function compute_residuals!(
-#     residuals::AbstractVector{T},
-#     Q::AbstractMatrix{T},
-#     inv_gamma::AbstractVector{T},
-# ) where {T}
+function compute_residuals!(
+    residuals::AbstractVector{T},
+    Q::AbstractMatrix{T},
+    inv_gamma::AbstractVector{T},
+) where {T}
 
-#     # Validate array dimensions.
-#     t = length(residuals)
-#     s = size(Q, 2)
-#     @assert t == size(Q, 1)
-#     @assert (t,) == size(inv_gamma)
+    # Validate array dimensions.
+    output_indices = axes(residuals, 1)
+    stage_indices = axes(Q, 2)
+    @assert axes(residuals) == (output_indices,)
+    @assert axes(Q) == (output_indices, stage_indices)
+    @assert axes(inv_gamma) == (output_indices,)
 
-#     # Construct numeric constants.
-#     _zero = zero(T)
+    # Construct numeric constants.
+    _zero = zero(T)
 
-#     @simd ivdep for i = 1:t
-#         @inbounds residuals[i] = -inv_gamma[i]
-#     end
-#     @inbounds for j = 1:s
-#         overlap = _zero
-#         for i = 1:t
-#             overlap += Q[i, j] * residuals[i]
-#         end
-#         @simd ivdep for i = 1:t
-#             residuals[i] -= overlap * Q[i, j]
-#         end
-#     end
-#     return residuals
-# end
+    # Initialize residuals.
+    @simd ivdep for i in output_indices
+        @inbounds residuals[i] = -inv_gamma[i]
+    end
+
+    # Orthogonalize residuals against columns of Q.
+    @inbounds for j in stage_indices
+        # Compute dot product without SIMD for determinism.
+        overlap = _zero
+        for i in output_indices
+            overlap += Q[i, j] * residuals[i]
+        end
+        @simd ivdep for i in output_indices
+            residuals[i] -= overlap * Q[i, j]
+        end
+    end
+
+    return residuals
+end
 
 
-# function compute_residuals_and_b!(
-#     residuals::AbstractVector{T},
-#     b::AbstractVector{T},
-#     Q::AbstractMatrix{T},
-#     inv_gamma::AbstractVector{T},
-# ) where {T}
+function compute_residuals_and_b!(
+    residuals::AbstractVector{T},
+    b::AbstractVector{T},
+    Q::AbstractMatrix{T},
+    inv_gamma::AbstractVector{T},
+) where {T}
 
-#     # Validate array dimensions.
-#     t = length(residuals)
-#     s = length(b)
-#     @assert (t, s) == size(Q)
-#     @assert (t,) == size(inv_gamma)
+    # Validate array dimensions.
+    output_indices = axes(residuals, 1)
+    stage_indices = axes(b, 1)
+    @assert axes(residuals) == (output_indices,)
+    @assert axes(b) == (stage_indices,)
+    @assert axes(Q) == (output_indices, stage_indices)
+    @assert axes(inv_gamma) == (output_indices,)
 
-#     # Construct numeric constants.
-#     _zero = zero(T)
+    # Construct numeric constants.
+    _zero = zero(T)
 
-#     @simd ivdep for i = 1:t
-#         @inbounds residuals[i] = -inv_gamma[i]
-#     end
-#     @inbounds for j = 1:s
-#         overlap = _zero
-#         for i = 1:t
-#             overlap += Q[i, j] * residuals[i]
-#         end
-#         @simd ivdep for i = 1:t
-#             residuals[i] -= overlap * Q[i, j]
-#         end
-#         b[j] = -overlap
-#     end
-#     return (residuals, b)
-# end
+    # Initialize residuals.
+    @simd ivdep for i in output_indices
+        @inbounds residuals[i] = -inv_gamma[i]
+    end
+
+    # Orthogonalize residuals against columns of Q.
+    @inbounds for j in stage_indices
+        # Compute dot product without SIMD for determinism.
+        overlap = _zero
+        for i in output_indices
+            overlap += Q[i, j] * residuals[i]
+        end
+        @simd ivdep for i in output_indices
+            residuals[i] -= overlap * Q[i, j]
+        end
+        # Store dot product in b.
+        b[j] = -overlap
+    end
+
+    return (residuals, b)
+end
 
 
 ############################################ GRADIENT COMPUTATION (FORWARD-MODE)
@@ -315,12 +329,12 @@ function pushforward_dPhi!(
 
     # Validate array dimensions.
     stage_indices = axes(dPhi, 1)
-    instruction_indices = axes(dPhi, 2)
-    @assert axes(dPhi) == (stage_indices, instruction_indices)
-    @assert axes(Phi) == (stage_indices, instruction_indices)
+    internal_indices = axes(dPhi, 2)
+    @assert axes(dPhi) == (stage_indices, internal_indices)
+    @assert axes(Phi) == (stage_indices, internal_indices)
     @assert axes(A) == (stage_indices, stage_indices)
     @assert axes(dA) == (stage_indices, stage_indices)
-    @assert axes(instructions) == (instruction_indices,)
+    @assert axes(instructions) == (internal_indices,)
 
     # Construct numeric constants.
     _zero = zero(T)
@@ -397,13 +411,13 @@ function pushforward_dPhi!(
 
     # Validate array dimensions.
     stage_indices = axes(dPhi, 1)
-    instruction_indices = axes(dPhi, 2)
-    @assert axes(dPhi) == (stage_indices, instruction_indices)
-    @assert axes(Phi) == (stage_indices, instruction_indices)
+    internal_indices = axes(dPhi, 2)
+    @assert axes(dPhi) == (stage_indices, internal_indices)
+    @assert axes(Phi) == (stage_indices, internal_indices)
     @assert axes(A) == (stage_indices, stage_indices)
     @assert u in stage_indices
     @assert v in stage_indices
-    @assert axes(instructions) == (instruction_indices,)
+    @assert axes(instructions) == (internal_indices,)
 
     # Construct numeric constants.
     _zero = zero(T)
@@ -436,112 +450,159 @@ function pushforward_dPhi!(
             end
         end
     end
+
     return dPhi
 end
 
 
-# function pushforward_db!(
-#     db::AbstractVector{T},
-#     temp::AbstractVector{T},
-#     dPhi::AbstractMatrix{T},
-#     b::AbstractVector{T},
-#     Q::AbstractMatrix{T},
-#     R::AbstractMatrix{T},
-#     output_indices::AbstractVector{Int},
-# ) where {T}
-#     s = length(db)
-#     t = length(temp)
-#     @assert s == size(dPhi, 1)
-#     @assert (s,) == size(b)
-#     @assert (t, s) == size(Q)
-#     @assert (s, s) == size(R)
-#     @assert (t,) == size(output_indices)
-#     _zero = zero(T)
-#     @inbounds for (i, k) in enumerate(output_indices)
-#         overlap = _zero
-#         for j = 1:s
-#             overlap += b[j] * dPhi[j, k]
-#         end
-#         temp[i] = overlap
-#     end
-#     @inbounds for i = 1:s
-#         overlap = _zero
-#         for j = 1:t
-#             overlap += Q[j, i] * temp[j]
-#         end
-#         db[i] = -overlap
-#     end
-#     solve_upper_triangular!(db, R)
-#     return db
-# end
+function pushforward_db!(
+    db::AbstractVector{T},
+    temp::AbstractVector{T},
+    dPhi::AbstractMatrix{T},
+    b::AbstractVector{T},
+    Q::AbstractMatrix{T},
+    R::AbstractMatrix{T},
+    selected_indices::AbstractVector{Int},
+) where {T}
+
+    # Validate array dimensions.
+    stage_indices = axes(db, 1)
+    output_indices = axes(temp, 1)
+    @assert axes(db) == (stage_indices,)
+    @assert axes(temp) == (output_indices,)
+    @assert axes(dPhi) == (stage_indices, output_indices)
+    @assert axes(b) == (stage_indices,)
+    @assert axes(Q) == (output_indices, stage_indices)
+    @assert axes(R) == (stage_indices, stage_indices)
+    @assert axes(selected_indices) == (output_indices,)
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    @inbounds for (i, k) in pairs(selected_indices)
+        # Compute dot product without SIMD for determinism.
+        overlap = _zero
+        for j in stage_indices
+            overlap += b[j] * dPhi[j, k]
+        end
+        temp[i] = overlap
+    end
+
+    @inbounds for i in stage_indices
+        # Compute dot product without SIMD for determinism.
+        overlap = _zero
+        for j in output_indices
+            overlap += Q[j, i] * temp[j]
+        end
+        db[i] = -overlap
+    end
+
+    solve_upper_triangular!(db, R)
+
+    return db
+end
 
 
-# function pushforward_db!(
-#     db::AbstractVector{T},
-#     temp::AbstractVector{T},
-#     residuals::AbstractVector{T},
-#     dPhi::AbstractMatrix{T},
-#     b::AbstractVector{T},
-#     Q::AbstractMatrix{T},
-#     R::AbstractMatrix{T},
-#     output_indices::AbstractVector{Int},
-# ) where {T}
-#     s = length(db)
-#     t = length(temp)
-#     @assert (t,) == size(residuals)
-#     @assert s == size(dPhi, 1)
-#     @assert (s,) == size(b)
-#     @assert (t, s) == size(Q)
-#     @assert (s, s) == size(R)
-#     @assert (t,) == size(output_indices)
-#     _zero = zero(T)
-#     @simd ivdep for i = 1:s
-#         @inbounds db[i] = _zero
-#     end
-#     @inbounds for (i, k) in enumerate(output_indices)
-#         r = residuals[i]
-#         @simd ivdep for j = 1:s
-#             db[j] += r * dPhi[j, k]
-#         end
-#     end
-#     solve_lower_triangular!(db, R)
-#     @inbounds for (i, k) in enumerate(output_indices)
-#         overlap = _zero
-#         for j = 1:s
-#             overlap += b[j] * dPhi[j, k]
-#         end
-#         temp[i] = overlap
-#     end
-#     @inbounds for i = 1:s
-#         overlap = _zero
-#         for j = 1:t
-#             overlap += Q[j, i] * temp[j]
-#         end
-#         db[i] = -(db[i] + overlap)
-#     end
-#     solve_upper_triangular!(db, R)
-#     return db
-# end
+function pushforward_db!(
+    db::AbstractVector{T},
+    temp::AbstractVector{T},
+    residuals::AbstractVector{T},
+    dPhi::AbstractMatrix{T},
+    b::AbstractVector{T},
+    Q::AbstractMatrix{T},
+    R::AbstractMatrix{T},
+    selected_indices::AbstractVector{Int},
+) where {T}
+
+    # Validate array dimensions.
+    stage_indices = axes(db, 1)
+    output_indices = axes(temp, 1)
+    internal_indices = axes(dPhi, 2)
+    @assert axes(db) == (stage_indices,)
+    @assert axes(temp) == (output_indices,)
+    @assert axes(residuals) == (output_indices,)
+    @assert axes(dPhi) == (stage_indices, internal_indices)
+    @assert axes(b) == (stage_indices,)
+    @assert axes(Q) == (output_indices, stage_indices)
+    @assert axes(R) == (stage_indices, stage_indices)
+    @assert axes(selected_indices) == (output_indices,)
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    @inbounds begin
+
+        @simd ivdep for i in stage_indices
+            db[i] = _zero
+        end
+
+        for (i, k) in pairs(selected_indices)
+            r = residuals[i]
+            @simd ivdep for j in stage_indices
+                db[j] += r * dPhi[j, k]
+            end
+        end
+
+    end
+
+    solve_lower_triangular!(db, R)
+
+    @inbounds begin
+
+        for (i, k) in pairs(selected_indices)
+            # Compute dot product without SIMD for determinism.
+            overlap = _zero
+            for j in stage_indices
+                overlap += b[j] * dPhi[j, k]
+            end
+            temp[i] = overlap
+        end
+
+        for i in stage_indices
+            # Compute dot product without SIMD for determinism.
+            overlap = _zero
+            for j in output_indices
+                overlap += Q[j, i] * temp[j]
+            end
+            db[i] = -(db[i] + overlap)
+        end
+
+    end
+
+    solve_upper_triangular!(db, R)
+
+    return db
+end
 
 
 function pushforward_dresiduals!(
     dresiduals::AbstractVector{T},
     b::AbstractVector{T},
     dPhi::AbstractMatrix{T},
-    output_indices::AbstractVector{Int},
+    selected_indices::AbstractVector{Int},
 ) where {T}
-    t = length(dresiduals)
-    s = length(b)
-    @assert s == size(dPhi, 1)
-    @assert (t,) == size(output_indices)
+
+    # Validate array dimensions.
+    output_indices = axes(dresiduals, 1)
+    stage_indices = axes(b, 1)
+    internal_indices = axes(dPhi, 2)
+    @assert axes(dresiduals) == (output_indices,)
+    @assert axes(b) == (stage_indices,)
+    @assert axes(dPhi) == (stage_indices, internal_indices)
+    @assert axes(selected_indices) == (output_indices,)
+
+    # Construct numeric constants.
     _zero = zero(T)
-    @inbounds for (i, k) in enumerate(output_indices)
+
+    @inbounds for (i, k) in pairs(selected_indices)
+        # Compute dot product without SIMD for determinism.
         doverlap = _zero
-        for j = 1:s
+        for j in stage_indices
             doverlap += b[j] * dPhi[j, k]
         end
         dresiduals[i] = doverlap
     end
+
     return dresiduals
 end
 
@@ -552,22 +613,32 @@ function pushforward_dresiduals!(
     b::AbstractVector{T},
     dPhi::AbstractMatrix{T},
     Phi::AbstractMatrix{T},
-    output_indices::AbstractVector{Int},
+    selected_indices::AbstractVector{Int},
 ) where {T}
-    t = length(dresiduals)
-    s = length(db)
-    @assert (s,) == size(b)
-    @assert s == size(dPhi, 1)
-    @assert size(dPhi) == size(Phi)
-    @assert (t,) == size(output_indices)
+
+    # Validate array dimensions.
+    output_indices = axes(dresiduals, 1)
+    stage_indices = axes(db, 1)
+    internal_indices = axes(dPhi, 2)
+    @assert axes(dresiduals) == (output_indices,)
+    @assert axes(db) == (stage_indices,)
+    @assert axes(b) == (stage_indices,)
+    @assert axes(dPhi) == (stage_indices, internal_indices)
+    @assert axes(Phi) == (stage_indices, internal_indices)
+    @assert axes(selected_indices) == (output_indices,)
+
+    # Construct numeric constants.
     _zero = zero(T)
-    @inbounds for (i, k) in enumerate(output_indices)
+
+    @inbounds for (i, k) in pairs(selected_indices)
+        # Compute dot product without SIMD for determinism.
         doverlap = _zero
-        for j = 1:s
+        for j in stage_indices
             doverlap += db[j] * Phi[j, k] + b[j] * dPhi[j, k]
         end
         dresiduals[i] = doverlap
     end
+
     return dresiduals
 end
 
@@ -575,117 +646,167 @@ end
 ############################################ GRADIENT COMPUTATION (REVERSE-MODE)
 
 
-# function pullback_dPhi_from_residual!(
-#     dPhi::AbstractMatrix{T}, b::AbstractVector{T},
-#     residuals::AbstractVector{T}, source_indices::AbstractVector{Int}
-# ) where {T}
-#     n, m = size(dPhi)
-#     @assert (n,) == size(b)
-#     @assert (m,) == size(source_indices)
-#     _zero = zero(T)
-#     @inbounds for (k, s) in Iterators.reverse(enumerate(source_indices))
-#         if s == NULL_INDEX
-#             @simd ivdep for j = 1:n
-#                 dPhi[j, k] = _zero
-#             end
-#         else
-#             residual = residuals[s]
-#             twice_residual = residual + residual
-#             @simd ivdep for j = 1:n
-#                 dPhi[j, k] = twice_residual * b[j]
-#             end
-#         end
-#     end
-#     return dPhi
-# end
+function pullback_dPhi_from_residual!(
+    dPhi::AbstractMatrix{T},
+    b::AbstractVector{T},
+    residuals::AbstractVector{T},
+    source_indices::AbstractVector{Int},
+) where {T}
+
+    # Validate array dimensions.
+    stage_indices = axes(dPhi, 1)
+    internal_indices = axes(dPhi, 2)
+    output_indices = axes(residuals, 1)
+    @assert axes(dPhi) == (stage_indices, internal_indices)
+    @assert axes(b) == (stage_indices,)
+    @assert axes(residuals) == (output_indices,)
+    @assert axes(source_indices) == (internal_indices,)
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    @inbounds for (k, s) in Iterators.reverse(pairs(source_indices))
+        if s == NULL_INDEX
+            @simd ivdep for j in stage_indices
+                dPhi[j, k] = _zero
+            end
+        else
+            residual = residuals[s]
+            twice_residual = residual + residual
+            @simd ivdep for j in stage_indices
+                dPhi[j, k] = twice_residual * b[j]
+            end
+        end
+    end
+
+    return dPhi
+end
 
 
-# function pullback_dPhi!(
-#     dPhi::AbstractMatrix{T}, A::AbstractMatrix{T}, Phi::AbstractMatrix{T},
-#     child_indices::AbstractVector{Int},
-#     sibling_ranges::AbstractVector{UnitRange{Int}},
-#     sibling_indices::AbstractVector{Pair{Int,Int}}
-# ) where {T}
-#     n, m = size(dPhi)
-#     @assert (n, m) == size(Phi)
-#     @assert (n, n) == size(A)
-#     @assert (m,) == size(child_indices)
-#     @assert (m,) == size(sibling_ranges)
-#     @inbounds for k = m:-1:1
-#         c = child_indices[k]
-#         if c != -1
-#             for j = 1:n
-#                 temp = dPhi[j, k]
-#                 for i = 1:n
-#                     temp += A[i, j] * dPhi[i, c]
-#                 end
-#                 dPhi[j, k] = temp
-#             end
-#         end
-#         for i in sibling_ranges[k]
-#             (p, q) = sibling_indices[i]
-#             @simd ivdep for j = 1:n
-#                 dPhi[j, k] += Phi[j, p] * dPhi[j, q]
-#             end
-#         end
-#     end
-#     return dPhi
-# end
+function pullback_dPhi!(
+    dPhi::AbstractMatrix{T},
+    A::AbstractMatrix{T},
+    Phi::AbstractMatrix{T},
+    extension_indices::AbstractVector{Int},
+    rooted_sum_ranges::AbstractVector{UnitRange{Int}},
+    rooted_sum_indices::AbstractVector{Pair{Int,Int}},
+) where {T}
+
+    # Validate array dimensions.
+    stage_indices = axes(dPhi, 1)
+    internal_indices = axes(dPhi, 2)
+    @assert axes(dPhi) == (stage_indices, internal_indices)
+    @assert axes(A) == (stage_indices, stage_indices)
+    @assert axes(Phi) == (stage_indices, internal_indices)
+    @assert axes(extension_indices) == (internal_indices,)
+    @assert axes(rooted_sum_ranges) == (internal_indices,)
+
+    @inbounds for k in Iterators.reverse(internal_indices)
+        c = extension_indices[k]
+        if c != NULL_INDEX
+            for j in stage_indices
+                temp = dPhi[j, k]
+                for i in stage_indices
+                    temp += A[i, j] * dPhi[i, c]
+                end
+                dPhi[j, k] = temp
+            end
+        end
+        for i in rooted_sum_ranges[k]
+            (p, q) = rooted_sum_indices[i]
+            @simd ivdep for j in stage_indices
+                dPhi[j, k] += Phi[j, p] * dPhi[j, q]
+            end
+        end
+    end
+
+    return dPhi
+end
 
 
-# function pullback_dA!(
-#     dA::AbstractMatrix{T}, Phi::AbstractMatrix{T}, dPhi::AbstractMatrix{T},
-#     child_indices::AbstractVector{Int}
-# ) where {T}
-#     n, m = size(Phi)
-#     @assert (n, m) == size(dPhi)
-#     @assert (n, n) == size(dA)
-#     @assert (m,) == size(child_indices)
-#     _zero = zero(T)
-#     @inbounds for j = 1:n
-#         @simd ivdep for i = 1:n
-#             dA[i, j] = _zero
-#         end
-#     end
-#     @inbounds for (k, c) in enumerate(child_indices)
-#         if c != -1
-#             for t = 1:n
-#                 f = Phi[t, k]
-#                 @simd ivdep for s = 1:n
-#                     dA[s, t] += f * dPhi[s, c]
-#                 end
-#             end
-#         end
-#     end
-#     return dA
-# end
+function pullback_dA!(
+    dA::AbstractMatrix{T},
+    Phi::AbstractMatrix{T},
+    dPhi::AbstractMatrix{T},
+    extension_indices::AbstractVector{Int},
+) where {T}
+
+    # Validate array dimensions.
+    stage_indices = axes(dA, 1)
+    internal_indices = axes(dPhi, 2)
+    @assert axes(dA) == (stage_indices, stage_indices)
+    @assert axes(Phi) == (stage_indices, internal_indices)
+    @assert axes(dPhi) == (stage_indices, internal_indices)
+    @assert axes(extension_indices) == (internal_indices,)
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    # Initialize dA to zero.
+    @inbounds for j in stage_indices
+        @simd ivdep for i in stage_indices
+            dA[i, j] = _zero
+        end
+    end
+
+    # Iterate over intermediate trees obtained by extension.
+    @inbounds for (k, c) in pairs(extension_indices)
+        if c != NULL_INDEX
+            for t in stage_indices
+                f = Phi[t, k]
+                @simd ivdep for s in stage_indices
+                    dA[s, t] += f * dPhi[s, c]
+                end
+            end
+        end
+    end
+
+    return dA
+end
 
 
-# function pullback_db!(
-#     db::AbstractVector{T}, Phi::AbstractMatrix{T},
-#     residuals::AbstractVector{T}, output_indices::AbstractVector{Int}
-# ) where {T}
-#     n = length(db)
-#     m = length(residuals)
-#     @assert n == size(Phi, 1)
-#     @assert m == length(output_indices)
-#     _zero = zero(T)
-#     @inbounds begin
-#         @simd ivdep for i = 1:n
-#             db[i] = _zero
-#         end
-#         for (i, k) in enumerate(output_indices)
-#             r = residuals[i]
-#             @simd ivdep for j = 1:n
-#                 db[j] += r * Phi[j, k]
-#             end
-#         end
-#         @simd ivdep for i = 1:n
-#             db[i] += db[i]
-#         end
-#     end
-#     return db
-# end
+function pullback_db!(
+    db::AbstractVector{T},
+    Phi::AbstractMatrix{T},
+    residuals::AbstractVector{T},
+    selected_indices::AbstractVector{Int},
+) where {T}
+
+    # Validate array dimensions.
+    stage_indices = axes(db, 1)
+    internal_indices = axes(Phi, 2)
+    output_indices = axes(residuals, 1)
+    @assert axes(db) == (stage_indices,)
+    @assert axes(Phi) == (stage_indices, internal_indices)
+    @assert axes(residuals) == (output_indices,)
+    @assert axes(selected_indices) == (output_indices,)
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    @inbounds begin
+
+        # Initialize db to zero.
+        @simd ivdep for i in stage_indices
+            db[i] = _zero
+        end
+
+        for (i, k) in pairs(selected_indices)
+            r = residuals[i]
+            @simd ivdep for j in stage_indices
+                db[j] += r * Phi[j, k]
+            end
+        end
+
+        # Double db. (Addition is faster than multiplication by two.)
+        @simd ivdep for i in stage_indices
+            db[i] += db[i]
+        end
+
+    end
+
+    return db
+end
 
 
 ########################################################### LEAST-SQUARES SOLVER
@@ -807,7 +928,8 @@ end
 
 
 function reshape_explicit!(
-    A::AbstractMatrix{T}, x::AbstractVector{T}
+    A::AbstractMatrix{T},
+    x::AbstractVector{T},
 ) where {T}
 
     # Validate array dimensions.
@@ -836,7 +958,8 @@ end
 
 
 function reshape_explicit!(
-    x::AbstractVector{T}, A::AbstractMatrix{T}
+    x::AbstractVector{T},
+    A::AbstractMatrix{T},
 ) where {T}
 
     # Validate array dimensions.
@@ -858,7 +981,9 @@ end
 
 
 function reshape_explicit!(
-    A::AbstractMatrix{T}, b::AbstractVector{T}, x::AbstractVector{T}
+    A::AbstractMatrix{T},
+    b::AbstractVector{T},
+    x::AbstractVector{T},
 ) where {T}
 
     # Validate array dimensions.
@@ -891,7 +1016,9 @@ end
 
 
 function reshape_explicit!(
-    x::AbstractVector{T}, A::AbstractMatrix{T}, b::AbstractVector{T}
+    x::AbstractVector{T},
+    A::AbstractMatrix{T},
+    b::AbstractVector{T},
 ) where {T}
 
     # Validate array dimensions.
@@ -918,7 +1045,8 @@ end
 
 
 function reshape_diagonally_implicit!(
-    A::AbstractMatrix{T}, x::AbstractVector{T}
+    A::AbstractMatrix{T},
+    x::AbstractVector{T},
 ) where {T}
 
     # Validate array dimensions.
@@ -946,7 +1074,8 @@ end
 
 
 function reshape_diagonally_implicit!(
-    x::AbstractVector{T}, A::AbstractMatrix{T}
+    x::AbstractVector{T},
+    A::AbstractMatrix{T},
 ) where {T}
 
     # Validate array dimensions.
@@ -968,7 +1097,9 @@ end
 
 
 function reshape_diagonally_implicit!(
-    A::AbstractMatrix{T}, b::AbstractVector{T}, x::AbstractVector{T}
+    A::AbstractMatrix{T},
+    b::AbstractVector{T},
+    x::AbstractVector{T},
 ) where {T}
 
     # Validate array dimensions.
@@ -1001,7 +1132,9 @@ end
 
 
 function reshape_diagonally_implicit!(
-    x::AbstractVector{T}, A::AbstractMatrix{T}, b::AbstractVector{T}
+    x::AbstractVector{T},
+    A::AbstractMatrix{T},
+    b::AbstractVector{T},
 ) where {T}
 
     # Validate array dimensions.
@@ -1028,7 +1161,8 @@ end
 
 
 function reshape_implicit!(
-    A::AbstractMatrix{T}, x::AbstractVector{T}
+    A::AbstractMatrix{T},
+    x::AbstractVector{T},
 ) where {T}
 
     # Validate array dimensions.
@@ -1050,7 +1184,8 @@ end
 
 
 function reshape_implicit!(
-    x::AbstractVector{T}, A::AbstractMatrix{T}
+    x::AbstractVector{T},
+    A::AbstractMatrix{T},
 ) where {T}
 
     # Validate array dimensions.
@@ -1072,7 +1207,9 @@ end
 
 
 function reshape_implicit!(
-    A::AbstractMatrix{T}, b::AbstractVector{T}, x::AbstractVector{T}
+    A::AbstractMatrix{T},
+    b::AbstractVector{T},
+    x::AbstractVector{T},
 ) where {T}
 
     # Validate array dimensions.
@@ -1099,7 +1236,9 @@ end
 
 
 function reshape_implicit!(
-    x::AbstractVector{T}, A::AbstractMatrix{T}, b::AbstractVector{T}
+    x::AbstractVector{T},
+    A::AbstractMatrix{T},
+    b::AbstractVector{T},
 ) where {T}
 
     # Validate array dimensions.
@@ -1131,12 +1270,12 @@ end
 
 # function populate_Q!(
 #     Q::AbstractMatrix{T}, Phi::AbstractMatrix{T},
-#     output_indices::AbstractVector{Int}
+#     selected_indices::AbstractVector{Int}
 # ) where {T}
 #     t, s = size(Q)
 #     @assert s == size(Phi, 1)
-#     @assert (t,) == size(output_indices)
-#     for (i, k) in enumerate(output_indices)
+#     @assert (t,) == size(selected_indices)
+#     for (i, k) in pairs(selected_indices)
 #         @simd ivdep for j = 1:s
 #             @inbounds Q[i, j] = Phi[j, k]
 #         end
@@ -1156,7 +1295,7 @@ end
 # function (ev::RKOCEvaluatorAE{T})(x::Vector{T}) where {T}
 #     reshape_explicit!(ev.A, x)
 #     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
-#     populate_Q!(ev.Q, ev.Phi, ev.table.output_indices)
+#     populate_Q!(ev.Q, ev.Phi, ev.table.selected_indices)
 #     gram_schmidt_qr!(ev.Q)
 #     compute_residuals!(ev.residuals, ev.Q, ev.inv_gamma)
 #     return residual_norm_squared(ev.residuals)
@@ -1166,7 +1305,7 @@ end
 # function (ev::RKOCEvaluatorAD{T})(x::Vector{T}) where {T}
 #     reshape_diagonally_implicit!(ev.A, x)
 #     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
-#     populate_Q!(ev.Q, ev.Phi, ev.table.output_indices)
+#     populate_Q!(ev.Q, ev.Phi, ev.table.selected_indices)
 #     gram_schmidt_qr!(ev.Q)
 #     compute_residuals!(ev.residuals, ev.Q, ev.inv_gamma)
 #     return residual_norm_squared(ev.residuals)
@@ -1176,7 +1315,7 @@ end
 # function (ev::RKOCEvaluatorAI{T})(x::Vector{T}) where {T}
 #     reshape_implicit!(ev.A, x)
 #     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
-#     populate_Q!(ev.Q, ev.Phi, ev.table.output_indices)
+#     populate_Q!(ev.Q, ev.Phi, ev.table.selected_indices)
 #     gram_schmidt_qr!(ev.Q)
 #     compute_residuals!(ev.residuals, ev.Q, ev.inv_gamma)
 #     return residual_norm_squared(ev.residuals)
@@ -1187,7 +1326,7 @@ end
 #     reshape_explicit!(ev.A, ev.b, x)
 #     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
 #     compute_residuals!(ev.residuals,
-#         ev.b, ev.Phi, ev.inv_gamma, ev.table.output_indices)
+#         ev.b, ev.Phi, ev.inv_gamma, ev.table.selected_indices)
 #     return residual_norm_squared(ev.residuals)
 # end
 
@@ -1196,7 +1335,7 @@ end
 #     reshape_diagonally_implicit!(ev.A, ev.b, x)
 #     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
 #     compute_residuals!(ev.residuals,
-#         ev.b, ev.Phi, ev.inv_gamma, ev.table.output_indices)
+#         ev.b, ev.Phi, ev.inv_gamma, ev.table.selected_indices)
 #     return residual_norm_squared(ev.residuals)
 # end
 
@@ -1205,7 +1344,7 @@ end
 #     reshape_implicit!(ev.A, ev.b, x)
 #     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
 #     compute_residuals!(ev.residuals,
-#         ev.b, ev.Phi, ev.inv_gamma, ev.table.output_indices)
+#         ev.b, ev.Phi, ev.inv_gamma, ev.table.selected_indices)
 #     return residual_norm_squared(ev.residuals)
 # end
 
@@ -1215,7 +1354,7 @@ end
 # ) where {T}
 #     reshape_explicit!(ev.A, x)
 #     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
-#     populate_Q!(ev.Q, ev.Phi, ev.table.output_indices)
+#     populate_Q!(ev.Q, ev.Phi, ev.table.selected_indices)
 #     gram_schmidt_qr!(ev.Q)
 #     compute_residuals!(residuals, ev.Q, ev.inv_gamma)
 #     return residuals
@@ -1227,7 +1366,7 @@ end
 # ) where {T}
 #     reshape_diagonally_implicit!(ev.A, x)
 #     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
-#     populate_Q!(ev.Q, ev.Phi, ev.table.output_indices)
+#     populate_Q!(ev.Q, ev.Phi, ev.table.selected_indices)
 #     gram_schmidt_qr!(ev.Q)
 #     compute_residuals!(residuals, ev.Q, ev.inv_gamma)
 #     return residuals
@@ -1239,7 +1378,7 @@ end
 # ) where {T}
 #     reshape_implicit!(ev.A, x)
 #     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
-#     populate_Q!(ev.Q, ev.Phi, ev.table.output_indices)
+#     populate_Q!(ev.Q, ev.Phi, ev.table.selected_indices)
 #     gram_schmidt_qr!(ev.Q)
 #     compute_residuals!(residuals, ev.Q, ev.inv_gamma)
 #     return residuals
@@ -1252,7 +1391,7 @@ end
 #     reshape_explicit!(ev.A, ev.b, x)
 #     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
 #     compute_residuals!(residuals,
-#         ev.b, ev.Phi, ev.inv_gamma, ev.table.output_indices)
+#         ev.b, ev.Phi, ev.inv_gamma, ev.table.selected_indices)
 #     return residuals
 # end
 
@@ -1263,7 +1402,7 @@ end
 #     reshape_diagonally_implicit!(ev.A, ev.b, x)
 #     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
 #     compute_residuals!(residuals,
-#         ev.b, ev.Phi, ev.inv_gamma, ev.table.output_indices)
+#         ev.b, ev.Phi, ev.inv_gamma, ev.table.selected_indices)
 #     return residuals
 # end
 
@@ -1274,23 +1413,23 @@ end
 #     reshape_implicit!(ev.A, ev.b, x)
 #     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
 #     compute_residuals!(residuals,
-#         ev.b, ev.Phi, ev.inv_gamma, ev.table.output_indices)
+#         ev.b, ev.Phi, ev.inv_gamma, ev.table.selected_indices)
 #     return residuals
 # end
 
 
 # @inline (ev::RKOCResidualEvaluatorAE{T})(x::Vector{T}) where {T} =
-#     ev(Vector{T}(undef, length(ev.table.output_indices)), x)
+#     ev(Vector{T}(undef, length(ev.table.selected_indices)), x)
 # @inline (ev::RKOCResidualEvaluatorAD{T})(x::Vector{T}) where {T} =
-#     ev(Vector{T}(undef, length(ev.table.output_indices)), x)
+#     ev(Vector{T}(undef, length(ev.table.selected_indices)), x)
 # @inline (ev::RKOCResidualEvaluatorAI{T})(x::Vector{T}) where {T} =
-#     ev(Vector{T}(undef, length(ev.table.output_indices)), x)
+#     ev(Vector{T}(undef, length(ev.table.selected_indices)), x)
 # @inline (ev::RKOCResidualEvaluatorBE{T})(x::Vector{T}) where {T} =
-#     ev(Vector{T}(undef, length(ev.table.output_indices)), x)
+#     ev(Vector{T}(undef, length(ev.table.selected_indices)), x)
 # @inline (ev::RKOCResidualEvaluatorBD{T})(x::Vector{T}) where {T} =
-#     ev(Vector{T}(undef, length(ev.table.output_indices)), x)
+#     ev(Vector{T}(undef, length(ev.table.selected_indices)), x)
 # @inline (ev::RKOCResidualEvaluatorBI{T})(x::Vector{T}) where {T} =
-#     ev(Vector{T}(undef, length(ev.table.output_indices)), x)
+#     ev(Vector{T}(undef, length(ev.table.selected_indices)), x)
 
 
 # struct RKOCEvaluatorAEAdjoint{T}
@@ -1360,7 +1499,7 @@ end
 # function (adj::RKOCEvaluatorAEAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
 #     reshape_explicit!(adj.ev.A, x)
 #     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
-#     populate_Q!(adj.ev.Q, adj.ev.Phi, adj.ev.table.output_indices)
+#     populate_Q!(adj.ev.Q, adj.ev.Phi, adj.ev.table.selected_indices)
 #     gram_schmidt_qr!(adj.ev.Q, adj.ev.R)
 #     compute_residuals_and_b!(adj.ev.residuals, adj.ev.b,
 #         adj.ev.Q, adj.ev.inv_gamma)
@@ -1368,10 +1507,10 @@ end
 #     pullback_dPhi_from_residual!(adj.ev.dPhi,
 #         adj.ev.b, adj.ev.residuals, adj.ev.table.source_indices)
 #     pullback_dPhi!(adj.ev.dPhi,
-#         adj.ev.A, adj.ev.Phi, adj.ev.table.child_indices,
-#         adj.ev.table.sibling_ranges, adj.ev.table.sibling_indices)
+#         adj.ev.A, adj.ev.Phi, adj.ev.table.extension_indices,
+#         adj.ev.table.rooted_sum_ranges, adj.ev.table.rooted_sum_indices)
 #     pullback_dA!(adj.ev.dA,
-#         adj.ev.Phi, adj.ev.dPhi, adj.ev.table.child_indices)
+#         adj.ev.Phi, adj.ev.dPhi, adj.ev.table.extension_indices)
 #     reshape_explicit!(g, adj.ev.dA)
 #     return g
 # end
@@ -1380,7 +1519,7 @@ end
 # function (adj::RKOCEvaluatorADAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
 #     reshape_diagonally_implicit!(adj.ev.A, x)
 #     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
-#     populate_Q!(adj.ev.Q, adj.ev.Phi, adj.ev.table.output_indices)
+#     populate_Q!(adj.ev.Q, adj.ev.Phi, adj.ev.table.selected_indices)
 #     gram_schmidt_qr!(adj.ev.Q, adj.ev.R)
 #     compute_residuals_and_b!(adj.ev.residuals, adj.ev.b,
 #         adj.ev.Q, adj.ev.inv_gamma)
@@ -1388,10 +1527,10 @@ end
 #     pullback_dPhi_from_residual!(adj.ev.dPhi,
 #         adj.ev.b, adj.ev.residuals, adj.ev.table.source_indices)
 #     pullback_dPhi!(adj.ev.dPhi,
-#         adj.ev.A, adj.ev.Phi, adj.ev.table.child_indices,
-#         adj.ev.table.sibling_ranges, adj.ev.table.sibling_indices)
+#         adj.ev.A, adj.ev.Phi, adj.ev.table.extension_indices,
+#         adj.ev.table.rooted_sum_ranges, adj.ev.table.rooted_sum_indices)
 #     pullback_dA!(adj.ev.dA,
-#         adj.ev.Phi, adj.ev.dPhi, adj.ev.table.child_indices)
+#         adj.ev.Phi, adj.ev.dPhi, adj.ev.table.extension_indices)
 #     reshape_diagonally_implicit!(g, adj.ev.dA)
 #     return g
 # end
@@ -1400,7 +1539,7 @@ end
 # function (adj::RKOCEvaluatorAIAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
 #     reshape_implicit!(adj.ev.A, x)
 #     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
-#     populate_Q!(adj.ev.Q, adj.ev.Phi, adj.ev.table.output_indices)
+#     populate_Q!(adj.ev.Q, adj.ev.Phi, adj.ev.table.selected_indices)
 #     gram_schmidt_qr!(adj.ev.Q, adj.ev.R)
 #     compute_residuals_and_b!(adj.ev.residuals, adj.ev.b,
 #         adj.ev.Q, adj.ev.inv_gamma)
@@ -1408,10 +1547,10 @@ end
 #     pullback_dPhi_from_residual!(adj.ev.dPhi,
 #         adj.ev.b, adj.ev.residuals, adj.ev.table.source_indices)
 #     pullback_dPhi!(adj.ev.dPhi,
-#         adj.ev.A, adj.ev.Phi, adj.ev.table.child_indices,
-#         adj.ev.table.sibling_ranges, adj.ev.table.sibling_indices)
+#         adj.ev.A, adj.ev.Phi, adj.ev.table.extension_indices,
+#         adj.ev.table.rooted_sum_ranges, adj.ev.table.rooted_sum_indices)
 #     pullback_dA!(adj.ev.dA,
-#         adj.ev.Phi, adj.ev.dPhi, adj.ev.table.child_indices)
+#         adj.ev.Phi, adj.ev.dPhi, adj.ev.table.extension_indices)
 #     reshape_implicit!(g, adj.ev.dA)
 #     return g
 # end
@@ -1421,16 +1560,16 @@ end
 #     reshape_explicit!(adj.ev.A, adj.ev.b, x)
 #     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
 #     compute_residuals!(adj.ev.residuals,
-#         adj.ev.b, adj.ev.Phi, adj.ev.inv_gamma, adj.ev.table.output_indices)
+#         adj.ev.b, adj.ev.Phi, adj.ev.inv_gamma, adj.ev.table.selected_indices)
 #     pullback_dPhi_from_residual!(adj.ev.dPhi,
 #         adj.ev.b, adj.ev.residuals, adj.ev.table.source_indices)
 #     pullback_dPhi!(adj.ev.dPhi,
-#         adj.ev.A, adj.ev.Phi, adj.ev.table.child_indices,
-#         adj.ev.table.sibling_ranges, adj.ev.table.sibling_indices)
+#         adj.ev.A, adj.ev.Phi, adj.ev.table.extension_indices,
+#         adj.ev.table.rooted_sum_ranges, adj.ev.table.rooted_sum_indices)
 #     pullback_dA!(adj.ev.dA,
-#         adj.ev.Phi, adj.ev.dPhi, adj.ev.table.child_indices)
+#         adj.ev.Phi, adj.ev.dPhi, adj.ev.table.extension_indices)
 #     pullback_db!(adj.ev.db,
-#         adj.ev.Phi, adj.ev.residuals, adj.ev.table.output_indices)
+#         adj.ev.Phi, adj.ev.residuals, adj.ev.table.selected_indices)
 #     reshape_explicit!(g, adj.ev.dA, adj.ev.db)
 #     return g
 # end
@@ -1440,16 +1579,16 @@ end
 #     reshape_diagonally_implicit!(adj.ev.A, adj.ev.b, x)
 #     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
 #     compute_residuals!(adj.ev.residuals,
-#         adj.ev.b, adj.ev.Phi, adj.ev.inv_gamma, adj.ev.table.output_indices)
+#         adj.ev.b, adj.ev.Phi, adj.ev.inv_gamma, adj.ev.table.selected_indices)
 #     pullback_dPhi_from_residual!(adj.ev.dPhi,
 #         adj.ev.b, adj.ev.residuals, adj.ev.table.source_indices)
 #     pullback_dPhi!(adj.ev.dPhi,
-#         adj.ev.A, adj.ev.Phi, adj.ev.table.child_indices,
-#         adj.ev.table.sibling_ranges, adj.ev.table.sibling_indices)
+#         adj.ev.A, adj.ev.Phi, adj.ev.table.extension_indices,
+#         adj.ev.table.rooted_sum_ranges, adj.ev.table.rooted_sum_indices)
 #     pullback_dA!(adj.ev.dA,
-#         adj.ev.Phi, adj.ev.dPhi, adj.ev.table.child_indices)
+#         adj.ev.Phi, adj.ev.dPhi, adj.ev.table.extension_indices)
 #     pullback_db!(adj.ev.db,
-#         adj.ev.Phi, adj.ev.residuals, adj.ev.table.output_indices)
+#         adj.ev.Phi, adj.ev.residuals, adj.ev.table.selected_indices)
 #     reshape_diagonally_implicit!(g, adj.ev.dA, adj.ev.db)
 #     return g
 # end
@@ -1459,16 +1598,16 @@ end
 #     reshape_implicit!(adj.ev.A, adj.ev.b, x)
 #     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
 #     compute_residuals!(adj.ev.residuals,
-#         adj.ev.b, adj.ev.Phi, adj.ev.inv_gamma, adj.ev.table.output_indices)
+#         adj.ev.b, adj.ev.Phi, adj.ev.inv_gamma, adj.ev.table.selected_indices)
 #     pullback_dPhi_from_residual!(adj.ev.dPhi,
 #         adj.ev.b, adj.ev.residuals, adj.ev.table.source_indices)
 #     pullback_dPhi!(adj.ev.dPhi,
-#         adj.ev.A, adj.ev.Phi, adj.ev.table.child_indices,
-#         adj.ev.table.sibling_ranges, adj.ev.table.sibling_indices)
+#         adj.ev.A, adj.ev.Phi, adj.ev.table.extension_indices,
+#         adj.ev.table.rooted_sum_ranges, adj.ev.table.rooted_sum_indices)
 #     pullback_dA!(adj.ev.dA,
-#         adj.ev.Phi, adj.ev.dPhi, adj.ev.table.child_indices)
+#         adj.ev.Phi, adj.ev.dPhi, adj.ev.table.extension_indices)
 #     pullback_db!(adj.ev.db,
-#         adj.ev.Phi, adj.ev.residuals, adj.ev.table.output_indices)
+#         adj.ev.Phi, adj.ev.residuals, adj.ev.table.selected_indices)
 #     reshape_implicit!(g, adj.ev.dA, adj.ev.db)
 #     return g
 # end
@@ -1477,11 +1616,11 @@ end
 # function (adj::RKOCResidualEvaluatorAEAdjoint{T})(
 #     jacobian::Matrix{T}, x::Vector{T}
 # ) where {T}
-#     @assert length(adj.ev.table.output_indices) == size(jacobian, 1)
+#     @assert length(adj.ev.table.selected_indices) == size(jacobian, 1)
 #     @assert length(x) == size(jacobian, 2)
 #     reshape_explicit!(adj.ev.A, x)
 #     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
-#     populate_Q!(adj.ev.Q, adj.ev.Phi, adj.ev.table.output_indices)
+#     populate_Q!(adj.ev.Q, adj.ev.Phi, adj.ev.table.selected_indices)
 #     gram_schmidt_qr!(adj.ev.Q, adj.ev.R)
 #     compute_residuals_and_b!(adj.ev.residuals, adj.ev.b,
 #         adj.ev.Q, adj.ev.inv_gamma)
@@ -1495,10 +1634,10 @@ end
 #             column = view(jacobian, :, k)
 #             pushforward_db!(adj.ev.db, column,
 #                 adj.ev.residuals, adj.ev.dPhi, adj.ev.b, adj.ev.Q, adj.ev.R,
-#                 adj.ev.table.output_indices)
+#                 adj.ev.table.selected_indices)
 #             pushforward_dresiduals!(column,
 #                 adj.ev.db, adj.ev.b, adj.ev.dPhi, adj.ev.Phi,
-#                 adj.ev.table.output_indices)
+#                 adj.ev.table.selected_indices)
 #             k += 1
 #         end
 #     end
@@ -1509,11 +1648,11 @@ end
 # function (adj::RKOCResidualEvaluatorADAdjoint{T})(
 #     jacobian::Matrix{T}, x::Vector{T}
 # ) where {T}
-#     @assert length(adj.ev.table.output_indices) == size(jacobian, 1)
+#     @assert length(adj.ev.table.selected_indices) == size(jacobian, 1)
 #     @assert length(x) == size(jacobian, 2)
 #     reshape_diagonally_implicit!(adj.ev.A, x)
 #     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
-#     populate_Q!(adj.ev.Q, adj.ev.Phi, adj.ev.table.output_indices)
+#     populate_Q!(adj.ev.Q, adj.ev.Phi, adj.ev.table.selected_indices)
 #     gram_schmidt_qr!(adj.ev.Q, adj.ev.R)
 #     compute_residuals_and_b!(adj.ev.residuals, adj.ev.b,
 #         adj.ev.Q, adj.ev.inv_gamma)
@@ -1527,10 +1666,10 @@ end
 #             column = view(jacobian, :, k)
 #             pushforward_db!(adj.ev.db, column,
 #                 adj.ev.residuals, adj.ev.dPhi, adj.ev.b, adj.ev.Q, adj.ev.R,
-#                 adj.ev.table.output_indices)
+#                 adj.ev.table.selected_indices)
 #             pushforward_dresiduals!(column,
 #                 adj.ev.db, adj.ev.b, adj.ev.dPhi, adj.ev.Phi,
-#                 adj.ev.table.output_indices)
+#                 adj.ev.table.selected_indices)
 #             k += 1
 #         end
 #     end
@@ -1541,11 +1680,11 @@ end
 # function (adj::RKOCResidualEvaluatorAIAdjoint{T})(
 #     jacobian::Matrix{T}, x::Vector{T}
 # ) where {T}
-#     @assert length(adj.ev.table.output_indices) == size(jacobian, 1)
+#     @assert length(adj.ev.table.selected_indices) == size(jacobian, 1)
 #     @assert length(x) == size(jacobian, 2)
 #     reshape_implicit!(adj.ev.A, x)
 #     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
-#     populate_Q!(adj.ev.Q, adj.ev.Phi, adj.ev.table.output_indices)
+#     populate_Q!(adj.ev.Q, adj.ev.Phi, adj.ev.table.selected_indices)
 #     gram_schmidt_qr!(adj.ev.Q, adj.ev.R)
 #     compute_residuals_and_b!(adj.ev.residuals, adj.ev.b,
 #         adj.ev.Q, adj.ev.inv_gamma)
@@ -1559,10 +1698,10 @@ end
 #             column = view(jacobian, :, k)
 #             pushforward_db!(adj.ev.db, column,
 #                 adj.ev.residuals, adj.ev.dPhi, adj.ev.b, adj.ev.Q, adj.ev.R,
-#                 adj.ev.table.output_indices)
+#                 adj.ev.table.selected_indices)
 #             pushforward_dresiduals!(column,
 #                 adj.ev.db, adj.ev.b, adj.ev.dPhi, adj.ev.Phi,
-#                 adj.ev.table.output_indices)
+#                 adj.ev.table.selected_indices)
 #             k += 1
 #         end
 #     end
@@ -1573,7 +1712,7 @@ end
 # function (adj::RKOCResidualEvaluatorBEAdjoint{T})(
 #     jacobian::Matrix{T}, x::Vector{T}
 # ) where {T}
-#     @assert length(adj.ev.table.output_indices) == size(jacobian, 1)
+#     @assert length(adj.ev.table.selected_indices) == size(jacobian, 1)
 #     @assert length(x) == size(jacobian, 2)
 #     reshape_explicit!(adj.ev.A, adj.ev.b, x)
 #     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
@@ -1584,12 +1723,12 @@ end
 #             pushforward_dPhi!(adj.ev.dPhi,
 #                 adj.ev.Phi, adj.ev.A, i, j, adj.ev.table.instructions)
 #             pushforward_dresiduals!(view(jacobian, :, k),
-#                 adj.ev.b, adj.ev.dPhi, adj.ev.table.output_indices)
+#                 adj.ev.b, adj.ev.dPhi, adj.ev.table.selected_indices)
 #             k += 1
 #         end
 #     end
 #     for j = 1:s
-#         for (i, m) in enumerate(adj.ev.table.output_indices)
+#         for (i, m) in pairs(adj.ev.table.selected_indices)
 #             @inbounds jacobian[i, k] = adj.ev.Phi[j, m]
 #         end
 #         k += 1
@@ -1601,7 +1740,7 @@ end
 # function (adj::RKOCResidualEvaluatorBDAdjoint{T})(
 #     jacobian::Matrix{T}, x::Vector{T}
 # ) where {T}
-#     @assert length(adj.ev.table.output_indices) == size(jacobian, 1)
+#     @assert length(adj.ev.table.selected_indices) == size(jacobian, 1)
 #     @assert length(x) == size(jacobian, 2)
 #     reshape_diagonally_implicit!(adj.ev.A, adj.ev.b, x)
 #     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
@@ -1612,12 +1751,12 @@ end
 #             pushforward_dPhi!(adj.ev.dPhi,
 #                 adj.ev.Phi, adj.ev.A, i, j, adj.ev.table.instructions)
 #             pushforward_dresiduals!(view(jacobian, :, k),
-#                 adj.ev.b, adj.ev.dPhi, adj.ev.table.output_indices)
+#                 adj.ev.b, adj.ev.dPhi, adj.ev.table.selected_indices)
 #             k += 1
 #         end
 #     end
 #     for j = 1:s
-#         for (i, m) in enumerate(adj.ev.table.output_indices)
+#         for (i, m) in pairs(adj.ev.table.selected_indices)
 #             @inbounds jacobian[i, k] = adj.ev.Phi[j, m]
 #         end
 #         k += 1
@@ -1629,7 +1768,7 @@ end
 # function (adj::RKOCResidualEvaluatorBIAdjoint{T})(
 #     jacobian::Matrix{T}, x::Vector{T}
 # ) where {T}
-#     @assert length(adj.ev.table.output_indices) == size(jacobian, 1)
+#     @assert length(adj.ev.table.selected_indices) == size(jacobian, 1)
 #     @assert length(x) == size(jacobian, 2)
 #     reshape_implicit!(adj.ev.A, adj.ev.b, x)
 #     compute_Phi!(adj.ev.Phi, adj.ev.A, adj.ev.table.instructions)
@@ -1640,12 +1779,12 @@ end
 #             pushforward_dPhi!(adj.ev.dPhi,
 #                 adj.ev.Phi, adj.ev.A, i, j, adj.ev.table.instructions)
 #             pushforward_dresiduals!(view(jacobian, :, k),
-#                 adj.ev.b, adj.ev.dPhi, adj.ev.table.output_indices)
+#                 adj.ev.b, adj.ev.dPhi, adj.ev.table.selected_indices)
 #             k += 1
 #         end
 #     end
 #     for j = 1:s
-#         for (i, m) in enumerate(adj.ev.table.output_indices)
+#         for (i, m) in pairs(adj.ev.table.selected_indices)
 #             @inbounds jacobian[i, k] = adj.ev.Phi[j, m]
 #         end
 #         k += 1
@@ -1667,17 +1806,17 @@ end
 # @inline (adj::RKOCEvaluatorBIAdjoint{T})(x::Vector{T}) where {T} =
 #     adj(similar(x), x)
 # @inline (adj::RKOCResidualEvaluatorAEAdjoint{T})(x::Vector{T}) where {T} =
-#     adj(Matrix{T}(undef, length(adj.ev.table.output_indices), length(x)), x)
+#     adj(Matrix{T}(undef, length(adj.ev.table.selected_indices), length(x)), x)
 # @inline (adj::RKOCResidualEvaluatorADAdjoint{T})(x::Vector{T}) where {T} =
-#     adj(Matrix{T}(undef, length(adj.ev.table.output_indices), length(x)), x)
+#     adj(Matrix{T}(undef, length(adj.ev.table.selected_indices), length(x)), x)
 # @inline (adj::RKOCResidualEvaluatorAIAdjoint{T})(x::Vector{T}) where {T} =
-#     adj(Matrix{T}(undef, length(adj.ev.table.output_indices), length(x)), x)
+#     adj(Matrix{T}(undef, length(adj.ev.table.selected_indices), length(x)), x)
 # @inline (adj::RKOCResidualEvaluatorBEAdjoint{T})(x::Vector{T}) where {T} =
-#     adj(Matrix{T}(undef, length(adj.ev.table.output_indices), length(x)), x)
+#     adj(Matrix{T}(undef, length(adj.ev.table.selected_indices), length(x)), x)
 # @inline (adj::RKOCResidualEvaluatorBDAdjoint{T})(x::Vector{T}) where {T} =
-#     adj(Matrix{T}(undef, length(adj.ev.table.output_indices), length(x)), x)
+#     adj(Matrix{T}(undef, length(adj.ev.table.selected_indices), length(x)), x)
 # @inline (adj::RKOCResidualEvaluatorBIAdjoint{T})(x::Vector{T}) where {T} =
-#     adj(Matrix{T}(undef, length(adj.ev.table.output_indices), length(x)), x)
+#     adj(Matrix{T}(undef, length(adj.ev.table.selected_indices), length(x)), x)
 
 
 end # module RungeKuttaToolKit
