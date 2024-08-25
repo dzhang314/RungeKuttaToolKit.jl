@@ -66,6 +66,25 @@ end
     RKOCEvaluatorQR{T}(all_rooted_trees(p), s)
 
 
+################################################################################
+
+
+function get_axes(ev::RKOCEvaluator{T}) where {T}
+    stage_axis = axes(ev.Phi, 1)
+    internal_axis = axes(ev.Phi, 2)
+    output_axis = axes(ev.inv_gamma, 1)
+    @assert axes(ev.table.instructions) == (internal_axis,)
+    @assert axes(ev.table.selected_indices) == (output_axis,)
+    @assert axes(ev.table.source_indices) == (internal_axis,)
+    @assert axes(ev.table.extension_indices) == (internal_axis,)
+    @assert axes(ev.table.rooted_sum_ranges) == (internal_axis,)
+    @assert axes(ev.Phi) == (stage_axis, internal_axis)
+    @assert axes(ev.dPhi) == (stage_axis, internal_axis)
+    @assert axes(ev.inv_gamma) == (output_axis,)
+    return (stage_axis, internal_axis, output_axis)
+end
+
+
 ################################################### PHI AND RESIDUAL COMPUTATION
 
 
@@ -717,6 +736,52 @@ function pullback_dPhi_from_residual!(
 end
 
 
+function pullback_dPhi_initial!(
+    dPhi::AbstractMatrix{T},
+    b::AbstractVector{T},
+    Phi::AbstractMatrix{T},
+    inv_gamma::AbstractVector{T},
+    source_indices::AbstractVector{Int},
+) where {T}
+
+    # Validate array dimensions.
+    stage_indices = axes(dPhi, 1)
+    internal_indices = axes(dPhi, 2)
+    output_indices = axes(inv_gamma, 1)
+    @assert axes(dPhi) == (stage_indices, internal_indices)
+    @assert axes(b) == (stage_indices,)
+    @assert axes(Phi) == (stage_indices, internal_indices)
+    @assert axes(inv_gamma) == (output_indices,)
+    @assert axes(source_indices) == (internal_indices,)
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    @inbounds for (k, s) in Iterators.reverse(pairs(source_indices))
+        if s == NULL_INDEX
+            @simd ivdep for j in stage_indices
+                dPhi[j, k] = _zero
+            end
+        else
+            # Compute dot product without SIMD for determinism.
+            residual = _zero
+            for j in stage_indices
+                residual += b[j] * Phi[j, k]
+            end
+            # Subtract inv_gamma[s] at the end for improved numerical stability.
+            residual -= inv_gamma[s]
+            # Double residual. (Addition is faster than multiplication by two.)
+            twice_residual = residual + residual
+            @simd ivdep for j in stage_indices
+                dPhi[j, k] = twice_residual * b[j]
+            end
+        end
+    end
+
+    return dPhi
+end
+
+
 function pullback_dPhi!(
     dPhi::AbstractMatrix{T},
     A::AbstractMatrix{T},
@@ -829,6 +894,58 @@ function pullback_db!(
             r = residuals[i]
             @simd ivdep for j in stage_indices
                 db[j] += r * Phi[j, k]
+            end
+        end
+
+        # Double db. (Addition is faster than multiplication by two.)
+        @simd ivdep for i in stage_indices
+            db[i] += db[i]
+        end
+
+    end
+
+    return db
+end
+
+
+function pullback_db!(
+    db::AbstractVector{T},
+    b::AbstractVector{T},
+    Phi::AbstractMatrix{T},
+    inv_gamma::AbstractVector{T},
+    selected_indices::AbstractVector{Int},
+) where {T}
+
+    # Validate array dimensions.
+    stage_indices = axes(db, 1)
+    internal_indices = axes(Phi, 2)
+    output_indices = axes(inv_gamma, 1)
+    @assert axes(db) == (stage_indices,)
+    @assert axes(b) == (stage_indices,)
+    @assert axes(Phi) == (stage_indices, internal_indices)
+    @assert axes(inv_gamma) == (output_indices,)
+    @assert axes(selected_indices) == (output_indices,)
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    @inbounds begin
+
+        # Initialize db to zero.
+        @simd ivdep for i in stage_indices
+            db[i] = _zero
+        end
+
+        for (i, k) in pairs(selected_indices)
+            # Compute dot product without SIMD for determinism.
+            residual = _zero
+            for j in stage_indices
+                residual += b[j] * Phi[j, k]
+            end
+            # Subtract inv_gamma[i] at the end for improved numerical stability.
+            residual -= inv_gamma[i]
+            @simd ivdep for j in stage_indices
+                db[j] += residual * Phi[j, k]
             end
         end
 
