@@ -29,6 +29,9 @@ function maximum_relative_difference(
 end
 
 
+#=
+
+
 ################################################################################
 
 
@@ -306,4 +309,69 @@ end
 
 @testset "Partial derivatives ($T)" for T in NUMERIC_TYPES
     test_partial_derivatives(T)
+end
+
+
+=#
+
+
+################################################################################
+
+
+function test_gradient(::Type{T}) where {T}
+
+    _eps = eps(T)
+    _sqrt_eps = sqrt(_eps)
+    tolerance = _sqrt_eps
+    for _ = 1:10
+        tolerance += tolerance
+    end
+    h = _sqrt_eps
+    all_trees = all_rooted_trees(10)
+
+    for num_stages = 0:8
+        trees = sample(all_trees, rand(1:length(all_trees));
+            replace=false, ordered=false)
+        ev = RKOCEvaluator{T}(trees, num_stages)
+
+        A = rand(T, num_stages, num_stages)
+        b = rand(T, num_stages)
+        gA_analytic = similar(A)
+        gb_analytic = similar(b)
+
+        if isbitstype(T)
+            @test iszero(@allocated ev'(gA_analytic, gb_analytic, A, b))
+        else
+            ev'(gA_analytic, gb_analytic, A, b)
+        end
+
+        dA = zeros(T, num_stages, num_stages)
+        db = zeros(T, num_stages)
+        gA_numerical = similar(A)
+        gb_numerical = similar(b)
+        for i = 1:num_stages
+            for j = 1:num_stages
+                dA[i, j] = one(T)
+                gA_numerical[i, j] = (
+                    ev(A + h * dA, b) - ev(A - h * dA, b)) / (h + h)
+                dA[i, j] = zero(T)
+            end
+        end
+        for k = 1:num_stages
+            db[k] = one(T)
+            gb_numerical[k] = (
+                ev(A, b + h * db) - ev(A, b - h * db)) / (h + h)
+            db[k] = zero(T)
+        end
+
+        @test maximum_relative_difference(
+            gA_analytic, gA_numerical) < tolerance
+        @test maximum_relative_difference(
+            gb_analytic, gb_numerical) < tolerance
+    end
+end
+
+
+@testset "Gradient ($T)" for T in NUMERIC_TYPES
+    test_gradient(T)
 end
