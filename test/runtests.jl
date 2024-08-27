@@ -29,9 +29,6 @@ function maximum_relative_difference(
 end
 
 
-#=
-
-
 ################################################################################
 
 
@@ -310,9 +307,6 @@ end
 @testset "Partial derivatives ($T)" for T in NUMERIC_TYPES
     test_partial_derivatives(T)
 end
-
-
-=#
 
 
 ################################################################################
