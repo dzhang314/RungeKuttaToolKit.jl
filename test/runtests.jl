@@ -7,7 +7,7 @@ using Test
 const NUMERIC_TYPES = [
     Float16, Float32, Float64, BigFloat,
     Float64x1, Float64x2, Float64x3, Float64x4,
-    Float64x5, Float64x6, Float64x7, Float64x8,]
+    Float64x5, Float64x6, Float64x7, Float64x8]
 
 
 function maximum_relative_difference(

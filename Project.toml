@@ -1,7 +1,7 @@
 name = "RungeKuttaToolKit"
 uuid = "5ccfa5ee-da33-4844-afab-33f13f6d8736"
 authors = ["David K. Zhang <dzhang314@gmail.com>"]
-version = "1.0.0"
+version = "2.0.0"
 
 [deps]
 MultiFloats = "bdf0d083-296b-4888-a5b6-7498122e68a5"
@@ -10,4 +10,5 @@ Test = "8dfed614-e22c-5e08-85e1-65c5234f0b40"
 
 [compat]
 MultiFloats = "2.0"
+StatsBase = "^0"
 julia = "1.0"
