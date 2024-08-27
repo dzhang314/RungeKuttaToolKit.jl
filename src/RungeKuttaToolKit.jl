@@ -5,6 +5,7 @@ using MultiFloats: MultiFloat, rsqrt
 
 
 include("ButcherInstructions.jl")
+include("ExampleMethods.jl")
 using .ButcherInstructions: LevelSequence,
     NULL_INDEX, ButcherInstruction, ButcherInstructionTable,
     rooted_trees, all_rooted_trees, butcher_density, butcher_symmetry
@@ -12,10 +13,10 @@ export LevelSequence, ButcherInstruction, ButcherInstructionTable,
     rooted_trees, all_rooted_trees, butcher_density, butcher_symmetry
 
 
-###################################################### EVALUATOR DATA STRUCTURES
+####################################################### EVALUATOR DATA STRUCTURE
 
 
-export RKOCEvaluator, RKOCEvaluatorQR
+export RKOCEvaluator
 
 
 struct RKOCEvaluator{T}
@@ -26,44 +27,60 @@ struct RKOCEvaluator{T}
 end
 
 
+"""
+    RKOCEvaluator{T}(
+        trees::AbstractVector{LevelSequence},
+        num_stages::Int;
+        optimize::Bool=true,
+        sort_by_depth::Bool=true,
+    ) -> RKOCEvaluator{T}
+
+Construct an `RKOCEvaluator` that encodes a given sequence of rooted trees.
+
+# Arguments
+- `trees`: input vector of rooted trees in `LevelSequence` representation.
+- `num_stages`: number of stages (i.e., size of the Butcher tableau). Must be
+    known at construction time to allocate internal workspace arrays.
+- `optimize`: if `true`, perform common subtree elimination. This may improve
+    performance in cases where `trees` is not the complete set of all rooted
+    trees up to a certain order.
+- `sort_by_depth`: if `true`, permute internal workspace arrays so that
+    intermediate results are calculated in an order that enables parallel
+    execution. This has no effect on single-threaded execution and is provided
+    for forward compatibility with future parallel implementations.
+
+Note that different permutations of `trees`, in addition to different values
+of `optimize` and `sort_by_depth`, may yield slightly different results due to
+the non-associative nature of floating-point arithmetic.
+"""
 function RKOCEvaluator{T}(
-    trees::AbstractVector{LevelSequence}, s::Int
+    trees::AbstractVector{LevelSequence},
+    num_stages::Int;
+    optimize::Bool=true,
+    sort_by_depth::Bool=true,
 ) where {T}
-    table = ButcherInstructionTable(trees)
+    table = ButcherInstructionTable(trees;
+        optimize=optimize, sort_by_depth=sort_by_depth)
     return RKOCEvaluator{T}(table,
-        Matrix{T}(undef, s, length(table.instructions)),
-        Matrix{T}(undef, s, length(table.instructions)),
+        Matrix{T}(undef, num_stages, length(table.instructions)),
+        Matrix{T}(undef, num_stages, length(table.instructions)),
         [inv(T(butcher_density(tree))) for tree in trees])
 end
 
 
-@inline RKOCEvaluator{T}(p::Int, s::Int) where {T} =
-    RKOCEvaluator{T}(all_rooted_trees(p), s)
+"""
+    RKOCEvaluator{T}(order::Int, num_stages::Int) -> RKOCEvaluator{T}
 
+Construct an `RKOCEvaluator` that encodes all rooted trees having at most
+`order` vertices.
 
-struct RKOCEvaluatorQR{T}
-    table::ButcherInstructionTable
-    Phi::Matrix{T}
-    dPhi::Matrix{T}
-    Q::Matrix{T}
-    R::Matrix{T}
-    inv_gamma::Vector{T}
-end
-
-
-function RKOCEvaluatorQR{T}(trees::Vector{LevelSequence}, s::Int) where {T}
-    table = ButcherInstructionTable(trees)
-    return RKOCEvaluatorQR{T}(table,
-        Matrix{T}(undef, s, length(table.instructions)),
-        Matrix{T}(undef, s, length(table.instructions)),
-        Matrix{T}(undef, length(trees), s),
-        Matrix{T}(undef, s, s),
-        [inv(T(butcher_density(tree))) for tree in trees])
-end
-
-
-@inline RKOCEvaluatorQR{T}(p::Int, s::Int) where {T} =
-    RKOCEvaluatorQR{T}(all_rooted_trees(p), s)
+By default, rooted trees are generated in graded reverse lexicographic order
+of their level sequence representation. This specific ordering maximizes the
+efficiency of generating all rooted trees.
+"""
+@inline RKOCEvaluator{T}(order::Int, num_stages::Int) where {T} =
+    RKOCEvaluator{T}(all_rooted_trees(order), num_stages;
+        optimize=false, sort_by_depth=false)
 
 
 ################################################################################
@@ -88,608 +105,491 @@ end
 ################################################### PHI AND RESIDUAL COMPUTATION
 
 
-"""
-    RungeKuttaToolKit.compute_Phi!(
-        Phi::AbstractMatrix{T},
-        A::AbstractMatrix{T},
-        instructions::AbstractVector{ButcherInstruction},
-    ) -> Phi
-
-Compute Butcher weight vectors ``\\{ \\Phi_t(A) : t \\in T \\}`` of a given
-matrix ``A`` over a set of rooted trees ``T`` represented by `instructions`.
-
-# Arguments
-- `Phi`: ``s \\times N`` output matrix. Each Butcher weight vector
-    ``\\Phi_t(A)`` is written to `Phi[:, i]`, where ``t`` is the rooted tree
-    represented by `instructions[i]`.
-- `A`: ``s \\times s`` input matrix containing Runge--Kutta coefficients.
-- `instructions`: length ``N`` input vector of `ButcherInstruction` objects
-    encoding a set of rooted trees.
-
-Here, ``s`` is the number of stages in the Runge--Kutta method represented by
-`A`, and ``N`` is the number of rooted trees in ``T``.
-"""
 function compute_Phi!(
-    Phi::AbstractMatrix{T},
+    ev::RKOCEvaluator{T},
     A::AbstractMatrix{T},
-    instructions::AbstractVector{ButcherInstruction},
 ) where {T}
 
     # Validate array dimensions.
-    stage_indices = axes(Phi, 1)
-    internal_indices = axes(Phi, 2)
-    @assert axes(Phi) == (stage_indices, internal_indices)
-    @assert axes(A) == (stage_indices, stage_indices)
-    @assert axes(instructions) == (internal_indices,)
+    stage_axis, _, _ = get_axes(ev)
+    @assert axes(A) == (stage_axis, stage_axis)
 
     # Construct numeric constants.
     _zero = zero(T)
     _one = one(T)
 
     # Iterate over Butcher instructions.
-    @inbounds for (k, instruction) in pairs(instructions)
+    @inbounds for (k, instruction) in pairs(ev.table.instructions)
         p, q = instruction.left, instruction.right
         if p == NULL_INDEX
             # The Butcher weight vector for the trivial tree
             # (p == NULL_INDEX and q == NULL_INDEX) is the all-ones vector.
             @assert q == NULL_INDEX
-            @simd ivdep for j in stage_indices
-                Phi[j, k] = _one
+            @simd ivdep for j in stage_axis
+                ev.Phi[j, k] = _one
             end
         elseif q == NULL_INDEX
             # The Butcher weight vector for a tree obtained by extension
             # (p != NULL_INDEX and q == NULL_INDEX) is a matrix-vector product.
-            @simd ivdep for j in stage_indices
-                Phi[j, k] = _zero
+            @simd ivdep for j in stage_axis
+                ev.Phi[j, k] = _zero
             end
-            for i in stage_indices
-                temp = Phi[i, p]
-                @simd ivdep for j in stage_indices
-                    Phi[j, k] += A[j, i] * temp
+            for i in stage_axis
+                phi = ev.Phi[i, p]
+                @simd ivdep for j in stage_axis
+                    ev.Phi[j, k] += A[j, i] * phi
                 end
             end
         else
             # The Butcher weight vector for a tree obtained by rooted sum
             # (p != NULL_INDEX and q != NULL_INDEX) is an elementwise product.
-            @simd ivdep for j in stage_indices
-                Phi[j, k] = Phi[j, p] * Phi[j, q]
+            @simd ivdep for j in stage_axis
+                ev.Phi[j, k] = ev.Phi[j, p] * ev.Phi[j, q]
             end
         end
     end
 
-    return Phi
+    return ev
 end
 
 
-"""
-    RungeKuttaToolKit.compute_residuals!(
-        residuals::AbstractVector{T},
-        b::AbstractVector{T},
-        Phi::AbstractMatrix{T},
-        inv_gamma::AbstractVector{T},
-        selected_indices::AbstractVector{Int},
-    ) where {T}
-
-Compute residuals ``\\{ \\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t) :
-t \\in T \\}`` of Runge--Kutta order conditions over a set of rooted trees
-``T`` using precomputed Butcher weight vectors ``\\Phi_t(A)`` and inverse
-density values ``1/\\gamma(t)``.
-
-# Arguments
-- `residuals`: length ``N_{\\text{output}}`` output vector. Each residual
-    ``\\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t)`` is written to
-    `residuals[i]`, where ``t`` is the rooted tree whose Butcher weight vector
-    is precomputed in `Phi[:, selected_indices[i]]`.
-- `b`: length ``s`` input vector containing Runge--Kutta weights.
-- `Phi`: ``s \\times N_{\\text{internal}}`` input matrix containing
-    precomputed Butcher weight vectors ``\\Phi_t(A)``. `Phi` may contain
-    additional Butcher weight vectors corresponding to rooted trees not in
-    ``T``. This is necessary when ``T`` contains a tree but not its subtrees.
-- `inv_gamma`: length ``N_{\\text{output}}`` input vector containing
-    precomputed Butcher density values.
-- `selected_indices`: length ``N_{\\text{output}}`` input vector of indices
-    in the range ``1:N_{\\text{internal}}`` specifying Butcher weight
-    vectors in `Phi` corresponding to rooted trees in ``T``.
-
-Here, ``s`` is the number of stages in the Runge--Kutta method represented by
-`b`, ``N_{\\text{output}}`` is the number of rooted trees in ``T``, and
-``N_{\\text{internal}}`` is the number of Butcher weight vectors in `Phi`.
-"""
 function compute_residuals!(
     residuals::AbstractVector{T},
+    ev::RKOCEvaluator{T},
     b::AbstractVector{T},
-    Phi::AbstractMatrix{T},
-    inv_gamma::AbstractVector{T},
-    selected_indices::AbstractVector{Int},
 ) where {T}
 
     # Validate array dimensions.
-    output_indices = axes(residuals, 1)
-    stage_indices = axes(b, 1)
-    internal_indices = axes(Phi, 2)
-    @assert axes(residuals) == (output_indices,)
-    @assert axes(b) == (stage_indices,)
-    @assert axes(Phi) == (stage_indices, internal_indices)
-    @assert axes(inv_gamma) == (output_indices,)
-    @assert axes(selected_indices) == (output_indices,)
+    stage_axis, _, output_axis = get_axes(ev)
+    @assert axes(residuals) == (output_axis,)
+    @assert axes(b) == (stage_axis,)
 
     # Construct numeric constants.
     _zero = zero(T)
 
     # Compute residuals.
-    @inbounds for (i, k) in pairs(selected_indices)
+    @inbounds for (i, k) in pairs(ev.table.selected_indices)
         # Compute dot product without SIMD for determinism.
-        residual = _zero
-        for j in stage_indices
-            residual += b[j] * Phi[j, k]
+        lhs = _zero
+        for j in stage_axis
+            lhs += b[j] * ev.Phi[j, k]
         end
-        # Subtract inv_gamma[i] at the end for improved numerical stability.
-        residuals[i] = residual - inv_gamma[i]
+        # Subtract inv_gamma at the end for improved numerical stability.
+        residuals[i] = lhs - ev.inv_gamma[i]
     end
 
     return residuals
 end
 
 
-function compute_residual_sum_of_squares(
+"""
+    (ev::RKOCEvaluator{T})(
+        residuals::AbstractVector{T},
+        A::AbstractMatrix{T},
+        b::AbstractVector{T}
+    ) -> AbstractVector{T}
+
+Compute residuals of the Runge--Kutta order conditions
+``\\{ \\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t) : t \\in T \\}``
+for a given Butcher tableau ``(A, \\mathbf{b})``
+over a set of rooted trees ``T`` encoded by an `RKOCEvaluator`.
+
+# Arguments
+- `ev`: `RKOCEvaluator` object encoding a set of rooted trees.
+- `residuals`: length ``|T|`` output vector. Each residual
+    ``\\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t)`` is written to
+    `residuals[i]` in the order specified when constructing `ev`.
+- `A`: ``s \\times s`` input matrix containing the coefficients of a
+    Runge--Kutta method (i.e., the upper-right block of a Butcher tableau).
+- `b`: length ``s`` input vector containing the weights of a Runge--Kutta
+    method (i.e., the lower-right row of a Butcher tableau).
+
+Here, ``|T|`` denotes the number of rooted trees encoded by `ev`, and ``s``
+denotes the number of stages specified when constructing `ev`.
+"""
+function (ev::RKOCEvaluator{T})(
+    residuals::AbstractVector{T},
+    A::AbstractMatrix{T},
+    b::AbstractVector{T}
+) where {T}
+    compute_Phi!(ev, A)
+    return compute_residuals!(residuals, ev, b)
+end
+
+
+function residual_sum_of_squares(
+    ev::RKOCEvaluator{T},
     b::AbstractVector{T},
-    Phi::AbstractMatrix{T},
-    inv_gamma::AbstractVector{T},
-    selected_indices::AbstractVector{Int},
 ) where {T}
 
     # Validate array dimensions.
-    stage_indices = axes(b, 1)
-    internal_indices = axes(Phi, 2)
-    output_indices = axes(inv_gamma, 1)
-    @assert axes(b) == (stage_indices,)
-    @assert axes(Phi) == (stage_indices, internal_indices)
-    @assert axes(inv_gamma) == (output_indices,)
-    @assert axes(selected_indices) == (output_indices,)
+    stage_axis, _, _ = get_axes(ev)
+    @assert axes(b) == (stage_axis,)
 
     # Construct numeric constants.
     _zero = zero(T)
 
+    # Compute sum of squared residuals.
     result = _zero
-    @inbounds for (i, k) in pairs(selected_indices)
+    @inbounds for (i, k) in pairs(ev.table.selected_indices)
         # Compute dot product without SIMD for determinism.
-        residual = _zero
-        for j in stage_indices
-            residual += b[j] * Phi[j, k]
+        lhs = _zero
+        for j in stage_axis
+            lhs += b[j] * ev.Phi[j, k]
         end
-        residual -= inv_gamma[i]
-        result += abs2(residual)
+        # Subtract inv_gamma at the end for improved numerical stability.
+        result += abs2(lhs - ev.inv_gamma[i])
     end
 
     return result
 end
 
 
-function compute_residuals!(
-    residuals::AbstractVector{T},
-    Q::AbstractMatrix{T},
-    inv_gamma::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    output_indices = axes(residuals, 1)
-    stage_indices = axes(Q, 2)
-    @assert axes(residuals) == (output_indices,)
-    @assert axes(Q) == (output_indices, stage_indices)
-    @assert axes(inv_gamma) == (output_indices,)
-
-    # Construct numeric constants.
-    _zero = zero(T)
-
-    # Initialize residuals.
-    @simd ivdep for i in output_indices
-        @inbounds residuals[i] = -inv_gamma[i]
-    end
-
-    # Orthogonalize residuals against columns of Q.
-    @inbounds for j in stage_indices
-        # Compute dot product without SIMD for determinism.
-        overlap = _zero
-        for i in output_indices
-            overlap += Q[i, j] * residuals[i]
-        end
-        @simd ivdep for i in output_indices
-            residuals[i] -= overlap * Q[i, j]
-        end
-    end
-
-    return residuals
-end
-
-
-function compute_residuals_and_b!(
-    residuals::AbstractVector{T},
-    b::AbstractVector{T},
-    Q::AbstractMatrix{T},
-    inv_gamma::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    output_indices = axes(residuals, 1)
-    stage_indices = axes(b, 1)
-    @assert axes(residuals) == (output_indices,)
-    @assert axes(b) == (stage_indices,)
-    @assert axes(Q) == (output_indices, stage_indices)
-    @assert axes(inv_gamma) == (output_indices,)
-
-    # Construct numeric constants.
-    _zero = zero(T)
-
-    # Initialize residuals.
-    @simd ivdep for i in output_indices
-        @inbounds residuals[i] = -inv_gamma[i]
-    end
-
-    # Orthogonalize residuals against columns of Q.
-    @inbounds for j in stage_indices
-        # Compute dot product without SIMD for determinism.
-        overlap = _zero
-        for i in output_indices
-            overlap += Q[i, j] * residuals[i]
-        end
-        @simd ivdep for i in output_indices
-            residuals[i] -= overlap * Q[i, j]
-        end
-        # Store dot product in b.
-        b[j] = -overlap
-    end
-
-    return (residuals, b)
-end
-
-
-############################################ GRADIENT COMPUTATION (FORWARD-MODE)
-
-
 """
-    RungeKuttaToolKit.pushforward_dPhi!(
-        dPhi::AbstractMatrix{T},
-        Phi::AbstractMatrix{T},
+    (ev::RKOCEvaluator{T})(
         A::AbstractMatrix{T},
-        dA::AbstractMatrix{T},
-        instructions::AbstractVector{ButcherInstruction},
-    ) where {T}
+        b::AbstractVector{T}
+    ) -> T
 
-Compute directional derivatives of Butcher weight vectors
-``\\{ \\nabla_{\\mathrm{d}A} \\Phi_t(A) : t \\in T \\}``
-at a given matrix ``A`` in direction ``\\mathrm{d}A``
-over a set of rooted trees ``T`` represented by `instructions`.
+Compute the sum of squared residuals of the Runge--Kutta order conditions
+``\\sum_{t \\in T} (\\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t))^2``
+for a given Butcher tableau ``(A, \\mathbf{b})``
+over a set of rooted trees ``T`` encoded by an `RKOCEvaluator`.
 
 # Arguments
-- `dPhi`: ``s \\times N`` output matrix. Each directional derivative
-    ``\\nabla_{\\mathrm{d}A} \\Phi_t(A)`` is written to `dPhi[:, i]`,
-    where ``t`` is the rooted tree represented by `instructions[i]`.
-- `Phi`: ``s \\times N`` input matrix containing precomputed
-    Butcher weight vectors ``\\Phi_t(A)``. See [`compute_Phi!`](@ref).
-- `A`: ``s \\times s`` input matrix containing Runge--Kutta coefficients.
-- `dA`: ``s \\times s`` input matrix containing derivative direction.
-- `instructions`: length ``N`` input vector of `ButcherInstruction` objects
-    encoding a set of rooted trees. See
-    [`ButcherInstructions.build_instructions`](@ref).
+- `ev`: `RKOCEvaluator` object encoding a set of rooted trees.
+- `A`: ``s \\times s`` input matrix containing the coefficients of a
+    Runge--Kutta method (i.e., the upper-right block of a Butcher tableau).
+- `b`: length ``s`` input vector containing the weights of a Runge--Kutta
+    method (i.e., the lower-right row of a Butcher tableau).
+
+Here, ``s`` denotes the number of stages specified when constructing `ev`.
 """
+function (ev::RKOCEvaluator{T})(
+    A::AbstractMatrix{T},
+    b::AbstractVector{T},
+) where {T}
+    compute_Phi!(ev, A)
+    return residual_sum_of_squares(ev, b)
+end
+
+
+######################################################### ADJOINT DATA STRUCTURE
+
+
+struct RKOCAdjoint{T}
+    ev::RKOCEvaluator{T}
+end
+
+
+@inline Base.adjoint(ev::RKOCEvaluator{T}) where {T} = RKOCAdjoint{T}(ev)
+
+
+############################## DIRECTIONAL DERIVATIVE COMPUTATION (FORWARD-MODE)
+
+
 function pushforward_dPhi!(
-    dPhi::AbstractMatrix{T},
-    Phi::AbstractMatrix{T},
+    ev::RKOCEvaluator{T},
     A::AbstractMatrix{T},
     dA::AbstractMatrix{T},
-    instructions::AbstractVector{ButcherInstruction},
 ) where {T}
 
     # Validate array dimensions.
-    stage_indices = axes(dPhi, 1)
-    internal_indices = axes(dPhi, 2)
-    @assert axes(dPhi) == (stage_indices, internal_indices)
-    @assert axes(Phi) == (stage_indices, internal_indices)
-    @assert axes(A) == (stage_indices, stage_indices)
-    @assert axes(dA) == (stage_indices, stage_indices)
-    @assert axes(instructions) == (internal_indices,)
+    stage_axis, _, _ = get_axes(ev)
+    @assert axes(A) == (stage_axis, stage_axis)
+    @assert axes(dA) == (stage_axis, stage_axis)
 
     # Construct numeric constants.
     _zero = zero(T)
 
     # Iterate over Butcher instructions.
-    @inbounds for (k, instruction) in pairs(instructions)
+    @inbounds for (k, instruction) in pairs(ev.table.instructions)
         p, q = instruction.left, instruction.right
         if p == NULL_INDEX
             # Trivial tree; derivative is zero.
             @assert q == NULL_INDEX
-            @simd ivdep for j in stage_indices
-                dPhi[j, k] = _zero
+            @simd ivdep for j in stage_axis
+                ev.dPhi[j, k] = _zero
             end
         elseif q == NULL_INDEX
             # Extension; apply product rule to matrix-vector product.
-            @simd ivdep for j in stage_indices
-                dPhi[j, k] = _zero
+            @simd ivdep for j in stage_axis
+                ev.dPhi[j, k] = _zero
             end
-            for i in stage_indices
-                temp = Phi[i, p]
-                dtemp = dPhi[i, p]
-                @simd ivdep for j in stage_indices
-                    dPhi[j, k] += dA[j, i] * temp + A[j, i] * dtemp
+            for i in stage_axis
+                phi = ev.Phi[i, p]
+                dphi = ev.dPhi[i, p]
+                @simd ivdep for j in stage_axis
+                    ev.dPhi[j, k] += dA[j, i] * phi + A[j, i] * dphi
                 end
             end
         else
             # Rooted sum; apply product rule to elementwise product.
-            @simd ivdep for j in stage_indices
-                dPhi[j, k] = dPhi[j, p] * Phi[j, q] + Phi[j, p] * dPhi[j, q]
+            @simd ivdep for j in stage_axis
+                ev.dPhi[j, k] = ev.dPhi[j, p] * ev.Phi[j, q] +
+                                ev.Phi[j, p] * ev.dPhi[j, q]
             end
         end
     end
 
-    return dPhi
-end
-
-
-"""
-    RungeKuttaToolKit.pushforward_dPhi!(
-        dPhi::AbstractMatrix{T},
-        Phi::AbstractMatrix{T},
-        A::AbstractMatrix{T},
-        u::Int,
-        v::Int,
-        instructions::AbstractVector{ButcherInstruction},
-    ) where {T}
-
-Compute partial derivatives of Butcher weight vectors
-``\\{ \\partial_{A_{u,v}} \\Phi_t(A) : t \\in T \\}``
-at a given matrix ``A`` with respect to entry ``A_{u,v}``
-over a set of rooted trees ``T`` represented by `instructions`.
-
-# Arguments
-- `dPhi`: ``s \\times N`` output matrix. Each partial derivative
-    ``\\partial_{A_{u,v}} \\Phi_t(A)`` is written to `dPhi[:, i]`,
-    where ``t`` is the rooted tree represented by `instructions[i]`.
-- `Phi`: ``s \\times N`` input matrix containing precomputed
-    Butcher weight vectors ``\\Phi_t(A)``. See [`compute_Phi!`](@ref).
-- `A`: ``s \\times s`` input matrix containing Runge--Kutta coefficients.
-- `u`: row index of entry with respect to which to differentiate.
-- `v`: column index of entry with respect to which to differentiate.
-- `instructions`: length ``N`` input vector of `ButcherInstruction` objects
-    encoding a set of rooted trees. See
-    [`ButcherInstructions.build_instructions`](@ref).
-"""
-function pushforward_dPhi!(
-    dPhi::AbstractMatrix{T},
-    Phi::AbstractMatrix{T},
-    A::AbstractMatrix{T},
-    u::Int,
-    v::Int,
-    instructions::AbstractVector{ButcherInstruction},
-) where {T}
-
-    # Validate array dimensions.
-    stage_indices = axes(dPhi, 1)
-    internal_indices = axes(dPhi, 2)
-    @assert axes(dPhi) == (stage_indices, internal_indices)
-    @assert axes(Phi) == (stage_indices, internal_indices)
-    @assert axes(A) == (stage_indices, stage_indices)
-    @assert u in stage_indices
-    @assert v in stage_indices
-    @assert axes(instructions) == (internal_indices,)
-
-    # Construct numeric constants.
-    _zero = zero(T)
-
-    # Iterate over Butcher instructions.
-    @inbounds for (k, instruction) in pairs(instructions)
-        p, q = instruction.left, instruction.right
-        if p == NULL_INDEX
-            # Trivial tree; derivative is zero.
-            @assert q == NULL_INDEX
-            @simd ivdep for j in stage_indices
-                dPhi[j, k] = _zero
-            end
-        elseif q == NULL_INDEX
-            # Extension; apply product rule to matrix-vector product.
-            @simd ivdep for j in stage_indices
-                dPhi[j, k] = _zero
-            end
-            dPhi[u, k] = Phi[v, p] # Additional term from product rule.
-            for i in stage_indices
-                dtemp = dPhi[i, p]
-                @simd ivdep for j in stage_indices
-                    dPhi[j, k] += dtemp * A[j, i]
-                end
-            end
-        else
-            # Rooted sum; apply product rule to elementwise product.
-            @simd ivdep for j in stage_indices
-                dPhi[j, k] = dPhi[j, p] * Phi[j, q] + Phi[j, p] * dPhi[j, q]
-            end
-        end
-    end
-
-    return dPhi
-end
-
-
-function pushforward_db!(
-    db::AbstractVector{T},
-    temp::AbstractVector{T},
-    dPhi::AbstractMatrix{T},
-    b::AbstractVector{T},
-    Q::AbstractMatrix{T},
-    R::AbstractMatrix{T},
-    selected_indices::AbstractVector{Int},
-) where {T}
-
-    # Validate array dimensions.
-    stage_indices = axes(db, 1)
-    output_indices = axes(temp, 1)
-    @assert axes(db) == (stage_indices,)
-    @assert axes(temp) == (output_indices,)
-    @assert axes(dPhi) == (stage_indices, output_indices)
-    @assert axes(b) == (stage_indices,)
-    @assert axes(Q) == (output_indices, stage_indices)
-    @assert axes(R) == (stage_indices, stage_indices)
-    @assert axes(selected_indices) == (output_indices,)
-
-    # Construct numeric constants.
-    _zero = zero(T)
-
-    @inbounds for (i, k) in pairs(selected_indices)
-        # Compute dot product without SIMD for determinism.
-        overlap = _zero
-        for j in stage_indices
-            overlap += b[j] * dPhi[j, k]
-        end
-        temp[i] = overlap
-    end
-
-    @inbounds for i in stage_indices
-        # Compute dot product without SIMD for determinism.
-        overlap = _zero
-        for j in output_indices
-            overlap += Q[j, i] * temp[j]
-        end
-        db[i] = -overlap
-    end
-
-    solve_upper_triangular!(db, R)
-
-    return db
-end
-
-
-function pushforward_db!(
-    db::AbstractVector{T},
-    temp::AbstractVector{T},
-    residuals::AbstractVector{T},
-    dPhi::AbstractMatrix{T},
-    b::AbstractVector{T},
-    Q::AbstractMatrix{T},
-    R::AbstractMatrix{T},
-    selected_indices::AbstractVector{Int},
-) where {T}
-
-    # Validate array dimensions.
-    stage_indices = axes(db, 1)
-    output_indices = axes(temp, 1)
-    internal_indices = axes(dPhi, 2)
-    @assert axes(db) == (stage_indices,)
-    @assert axes(temp) == (output_indices,)
-    @assert axes(residuals) == (output_indices,)
-    @assert axes(dPhi) == (stage_indices, internal_indices)
-    @assert axes(b) == (stage_indices,)
-    @assert axes(Q) == (output_indices, stage_indices)
-    @assert axes(R) == (stage_indices, stage_indices)
-    @assert axes(selected_indices) == (output_indices,)
-
-    # Construct numeric constants.
-    _zero = zero(T)
-
-    @inbounds begin
-
-        @simd ivdep for i in stage_indices
-            db[i] = _zero
-        end
-
-        for (i, k) in pairs(selected_indices)
-            r = residuals[i]
-            @simd ivdep for j in stage_indices
-                db[j] += r * dPhi[j, k]
-            end
-        end
-
-    end
-
-    solve_lower_triangular!(db, R)
-
-    @inbounds begin
-
-        for (i, k) in pairs(selected_indices)
-            # Compute dot product without SIMD for determinism.
-            overlap = _zero
-            for j in stage_indices
-                overlap += b[j] * dPhi[j, k]
-            end
-            temp[i] = overlap
-        end
-
-        for i in stage_indices
-            # Compute dot product without SIMD for determinism.
-            overlap = _zero
-            for j in output_indices
-                overlap += Q[j, i] * temp[j]
-            end
-            db[i] = -(db[i] + overlap)
-        end
-
-    end
-
-    solve_upper_triangular!(db, R)
-
-    return db
+    return ev
 end
 
 
 function pushforward_dresiduals!(
     dresiduals::AbstractVector{T},
+    ev::RKOCEvaluator{T},
     b::AbstractVector{T},
-    dPhi::AbstractMatrix{T},
-    selected_indices::AbstractVector{Int},
+    db::AbstractVector{T},
 ) where {T}
 
     # Validate array dimensions.
-    output_indices = axes(dresiduals, 1)
-    stage_indices = axes(b, 1)
-    internal_indices = axes(dPhi, 2)
-    @assert axes(dresiduals) == (output_indices,)
-    @assert axes(b) == (stage_indices,)
-    @assert axes(dPhi) == (stage_indices, internal_indices)
-    @assert axes(selected_indices) == (output_indices,)
+    stage_axis, _, output_axis = get_axes(ev)
+    @assert axes(dresiduals) == (output_axis,)
+    @assert axes(b) == (stage_axis,)
+    @assert axes(db) == (stage_axis,)
 
     # Construct numeric constants.
     _zero = zero(T)
 
-    @inbounds for (i, k) in pairs(selected_indices)
+    @inbounds for (i, k) in pairs(ev.table.selected_indices)
         # Compute dot product without SIMD for determinism.
-        doverlap = _zero
-        for j in stage_indices
-            doverlap += b[j] * dPhi[j, k]
+        dlhs = _zero
+        for j in stage_axis
+            dlhs += db[j] * ev.Phi[j, k] + b[j] * ev.dPhi[j, k]
         end
-        dresiduals[i] = doverlap
+        dresiduals[i] = dlhs
     end
 
     return dresiduals
 end
 
 
-function pushforward_dresiduals!(
+"""
+    (adj::RKOCAdjoint{T})(
+        dresiduals::AbstractVector{T},
+        A::AbstractMatrix{T},
+        dA::AbstractMatrix{T},
+        b::AbstractVector{T},
+        db::AbstractVector{T},
+    ) -> AbstractVector{T}
+
+Compute directional derivatives of the Runge--Kutta order conditions
+``\\{ \\nabla_{\\mathrm{d}A, \\mathrm{d}\\mathbf{b}} [
+\\mathbf{b} \\cdot \\Phi_t(A) ] : t \\in T \\}``
+at a given Butcher tableau ``(A, \\mathbf{b})``
+in direction ``(\\mathrm{d}A, \\mathrm{d}\\mathbf{b})``
+over a set of rooted trees ``T`` encoded by an `RKOCEvaluator`.
+
+# Arguments
+- `adj`: `RKOCAdjoint` object obtained by applying the adjoint operator `'`
+    to an `RKOCEvaluator`. In other words, this function should be called as
+    `ev'(dresiduals, A, dA, b, db)` where `ev` is an `RKOCEvaluator`.
+- `dresiduals`: length ``|T|`` output vector. Each directional derivative
+    ``\\nabla_{\\mathrm{d}A, \\mathrm{d}\\mathbf{b}} [
+    \\mathbf{b} \\cdot \\Phi_t(A) ]`` is written to `dresiduals[i]` in the
+    order specified when constructing `ev`.
+- `A`: ``s \\times s`` input matrix containing the coefficients of a
+    Runge--Kutta method (i.e., the upper-right block of a Butcher tableau).
+- `dA`: ``s \\times s`` input matrix containing the direction in which to
+    differentiate ``A``.
+- `b`: length ``s`` input vector containing the weights of a Runge--Kutta
+    method (i.e., the lower-right row of a Butcher tableau).
+- `db`: length ``s`` input vector containing the direction in which to
+    differentiate ``\\mathbf{b}``.
+
+Here, ``|T|`` denotes the number of rooted trees encoded by `ev`, and ``s``
+denotes the number of stages specified when constructing `ev`.
+"""
+function (adj::RKOCAdjoint{T})(
     dresiduals::AbstractVector{T},
-    db::AbstractVector{T},
+    A::AbstractMatrix{T},
+    dA::AbstractMatrix{T},
     b::AbstractVector{T},
-    dPhi::AbstractMatrix{T},
-    Phi::AbstractMatrix{T},
-    selected_indices::AbstractVector{Int},
+    db::AbstractVector{T},
+) where {T}
+    compute_Phi!(adj.ev, A)
+    pushforward_dPhi!(adj.ev, A, dA)
+    return pushforward_dresiduals!(dresiduals, adj.ev, b, db)
+end
+
+
+################################## PARTIAL DERIVATIVE COMPUTATION (FORWARD-MODE)
+
+
+function pushforward_dPhi!(
+    ev::RKOCEvaluator{T},
+    A::AbstractMatrix{T},
+    u::Int,
+    v::Int,
 ) where {T}
 
     # Validate array dimensions.
-    output_indices = axes(dresiduals, 1)
-    stage_indices = axes(db, 1)
-    internal_indices = axes(dPhi, 2)
-    @assert axes(dresiduals) == (output_indices,)
-    @assert axes(db) == (stage_indices,)
-    @assert axes(b) == (stage_indices,)
-    @assert axes(dPhi) == (stage_indices, internal_indices)
-    @assert axes(Phi) == (stage_indices, internal_indices)
-    @assert axes(selected_indices) == (output_indices,)
+    stage_axis, _, _ = get_axes(ev)
+    @assert axes(A) == (stage_axis, stage_axis)
+    @assert u in stage_axis
+    @assert v in stage_axis
 
     # Construct numeric constants.
     _zero = zero(T)
 
-    @inbounds for (i, k) in pairs(selected_indices)
-        # Compute dot product without SIMD for determinism.
-        doverlap = _zero
-        for j in stage_indices
-            doverlap += db[j] * Phi[j, k] + b[j] * dPhi[j, k]
+    # Iterate over Butcher instructions.
+    @inbounds for (k, instruction) in pairs(ev.table.instructions)
+        p, q = instruction.left, instruction.right
+        if p == NULL_INDEX
+            # Trivial tree; derivative is zero.
+            @assert q == NULL_INDEX
+            @simd ivdep for j in stage_axis
+                ev.dPhi[j, k] = _zero
+            end
+        elseif q == NULL_INDEX
+            # Extension; apply product rule to matrix-vector product.
+            @simd ivdep for j in stage_axis
+                ev.dPhi[j, k] = _zero
+            end
+            ev.dPhi[u, k] = ev.Phi[v, p] # Additional term from product rule.
+            for i in stage_axis
+                dphi = ev.dPhi[i, p]
+                @simd ivdep for j in stage_axis
+                    ev.dPhi[j, k] += A[j, i] * dphi
+                end
+            end
+        else
+            # Rooted sum; apply product rule to elementwise product.
+            @simd ivdep for j in stage_axis
+                ev.dPhi[j, k] = ev.dPhi[j, p] * ev.Phi[j, q] +
+                                ev.Phi[j, p] * ev.dPhi[j, q]
+            end
         end
-        dresiduals[i] = doverlap
+    end
+
+    return ev
+end
+
+
+function pushforward_dresiduals!(
+    dresiduals::AbstractVector{T},
+    ev::RKOCEvaluator{T},
+    b::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, output_axis = get_axes(ev)
+    @assert axes(dresiduals) == (output_axis,)
+    @assert axes(b) == (stage_axis,)
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    @inbounds for (i, k) in pairs(ev.table.selected_indices)
+        # Compute dot product without SIMD for determinism.
+        dlhs = _zero
+        for j in stage_axis
+            dlhs += b[j] * ev.dPhi[j, k]
+        end
+        dresiduals[i] = dlhs
+    end
+
+    return dresiduals
+end
+
+
+"""
+    (adj::RKOCAdjoint{T})(
+        dresiduals::AbstractVector{T},
+        A::AbstractMatrix{T},
+        i::Int,
+        j::Int,
+        b::AbstractVector{T},
+    ) -> AbstractVector{T}
+
+Compute partial derivatives of the Runge--Kutta order conditions
+``\\{ \\partial_{A_{i,j}} [ \\mathbf{b} \\cdot \\Phi_t(A) ] : t \\in T \\}``
+with respect to ``A_{i,j}`` at a given Butcher tableau ``(A, \\mathbf{b})``
+over a set of rooted trees ``T`` encoded by an `RKOCEvaluator`.
+
+# Arguments
+- `adj`: `RKOCAdjoint` object obtained by applying the adjoint operator `'`
+    to an `RKOCEvaluator`. In other words, this function should be called as
+    `ev'(dresiduals, A, i, j, b)` where `ev` is an `RKOCEvaluator`.
+- `dresiduals`: length ``|T|`` output vector. Each partial derivative
+    ``\\partial_{A_{i,j}} [ \\mathbf{b} \\cdot \\Phi_t(A) ]`` is written to
+    `dresiduals[i]` in the order specified when constructing `ev`.
+- `A`: ``s \\times s`` input matrix containing the coefficients of a
+    Runge--Kutta method (i.e., the upper-right block of a Butcher tableau).
+- `i`: row index of the entry of ``A`` to differentiate with respect to.
+- `j`: column index of the entry of ``A`` to differentiate with respect to.
+- `b`: length ``s`` input vector containing the weights of a Runge--Kutta
+    method (i.e., the lower-right row of a Butcher tableau).
+
+Here, ``|T|`` denotes the number of rooted trees encoded by `ev`, and ``s``
+denotes the number of stages specified when constructing `ev`.
+
+This method uses an optimized algorithm that should be faster than
+`ev'(dresiduals, A, dA, b, db)` when differentiating with respect to a single
+entry of ``A``. It may produce slightly different results due to the
+non-associative nature of floating-point arithmetic.
+"""
+function (adj::RKOCAdjoint)(
+    dresiduals::AbstractVector{T},
+    A::AbstractMatrix{T},
+    i::Int,
+    j::Int,
+    b::AbstractVector{T},
+) where {T}
+    compute_Phi!(adj.ev, A)
+    pushforward_dPhi!(adj.ev, A, i, j)
+    return pushforward_dresiduals!(dresiduals, adj.ev, b)
+end
+
+
+"""
+    (adj::RKOCAdjoint{T})(
+        dresiduals::AbstractVector{T},
+        A::AbstractMatrix{T},
+        i::Int,
+    ) -> AbstractVector{T}
+
+Compute partial derivatives of the Runge--Kutta order conditions
+``\\{ \\partial_{b_i} [ \\mathbf{b} \\cdot \\Phi_t(A) ] : t \\in T \\}``
+with respect to ``b_i`` at a given Butcher tableau ``A``
+over a set of rooted trees ``T`` encoded by an `RKOCEvaluator`.
+(The result is independent of the value of ``\\mathbf{b}``.)
+
+# Arguments
+- `adj`: `RKOCAdjoint` object obtained by applying the adjoint operator `'`
+    to an `RKOCEvaluator`. In other words, this function should be called as
+    `ev'(dresiduals, A, i)` where `ev` is an `RKOCEvaluator`.
+- `dresiduals`: length ``|T|`` output vector. Each partial derivative
+    ``\\partial_{b_i} [ \\mathbf{b} \\cdot \\Phi_t(A) ]`` is written to
+    `dresiduals[i]` in the order specified when constructing `ev`.
+- `A`: ``s \\times s`` input matrix containing the coefficients of a
+    Runge--Kutta method (i.e., the upper-right block of a Butcher tableau).
+- `i`: index of the entry of ``\\mathbf{b}`` to differentiate with respect to.
+
+Here, ``|T|`` denotes the number of rooted trees encoded by `ev`, and ``s``
+denotes the number of stages specified when constructing `ev`.
+
+This method uses an optimized algorithm that should be faster than
+`ev'(dresiduals, A, dA, b, db)` when differentiating with respect to a single
+entry of ``\\mathbf{b}``. It may produce slightly different results due to the
+non-associative nature of floating-point arithmetic.
+"""
+function (adj::RKOCAdjoint)(
+    dresiduals::AbstractVector{T},
+    A::AbstractMatrix{T},
+    i::Int,
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, _ = get_axes(adj.ev)
+    @assert i in stage_axis
+
+    compute_Phi!(adj.ev, A)
+
+    # Extract entries of Phi.
+    @inbounds for (j, k) in pairs(adj.ev.table.selected_indices)
+        dresiduals[j] = adj.ev.Phi[i, k]
     end
 
     return dresiduals
@@ -866,50 +766,6 @@ end
 
 function pullback_db!(
     db::AbstractVector{T},
-    Phi::AbstractMatrix{T},
-    residuals::AbstractVector{T},
-    selected_indices::AbstractVector{Int},
-) where {T}
-
-    # Validate array dimensions.
-    stage_indices = axes(db, 1)
-    internal_indices = axes(Phi, 2)
-    output_indices = axes(residuals, 1)
-    @assert axes(db) == (stage_indices,)
-    @assert axes(Phi) == (stage_indices, internal_indices)
-    @assert axes(residuals) == (output_indices,)
-    @assert axes(selected_indices) == (output_indices,)
-
-    # Construct numeric constants.
-    _zero = zero(T)
-
-    @inbounds begin
-
-        # Initialize db to zero.
-        @simd ivdep for i in stage_indices
-            db[i] = _zero
-        end
-
-        for (i, k) in pairs(selected_indices)
-            r = residuals[i]
-            @simd ivdep for j in stage_indices
-                db[j] += r * Phi[j, k]
-            end
-        end
-
-        # Double db. (Addition is faster than multiplication by two.)
-        @simd ivdep for i in stage_indices
-            db[i] += db[i]
-        end
-
-    end
-
-    return db
-end
-
-
-function pullback_db!(
-    db::AbstractVector{T},
     b::AbstractVector{T},
     Phi::AbstractMatrix{T},
     inv_gamma::AbstractVector{T},
@@ -968,111 +824,6 @@ end
 @inline inv_sqrt(x::Float64) = rsqrt(x)
 @inline inv_sqrt(x::MultiFloat{T,N}) where {T,N} = rsqrt(x)
 @inline inv_sqrt(x::T) where {T} = inv(sqrt(x))
-
-
-# function gram_schmidt_qr!(Q::AbstractMatrix{T}) where {T}
-#     t, s = size(Q)
-#     _zero = zero(T)
-#     @inbounds for i = 1:s
-#         squared_norm = _zero
-#         for k = 1:t
-#             squared_norm += abs2(Q[k, i])
-#         end
-#         if !iszero(squared_norm)
-#             inv_norm = inv_sqrt(squared_norm)
-#             @simd ivdep for k = 1:t
-#                 Q[k, i] *= inv_norm
-#             end
-#             for j = i+1:s
-#                 overlap = _zero
-#                 for k = 1:t
-#                     overlap += Q[k, i] * Q[k, j]
-#                 end
-#                 @simd ivdep for k = 1:t
-#                     Q[k, j] -= overlap * Q[k, i]
-#                 end
-#             end
-#         end
-#     end
-#     return Q
-# end
-
-
-# function gram_schmidt_qr!(Q::AbstractMatrix{T}, R::AbstractMatrix{T}) where {T}
-#     t, s = size(Q)
-#     @assert (s, s) == size(R)
-#     # NOTE: R is stored transposed, and its diagonal is stored inverted.
-#     _zero = zero(T)
-#     @inbounds for i = 1:s
-#         squared_norm = _zero
-#         for k = 1:t
-#             squared_norm += abs2(Q[k, i])
-#         end
-#         if !iszero(squared_norm)
-#             inv_norm = inv_sqrt(squared_norm)
-#             R[i, i] = inv_norm
-#             @simd ivdep for k = 1:t
-#                 Q[k, i] *= inv_norm
-#             end
-#             for j = i+1:s
-#                 overlap = _zero
-#                 for k = 1:t
-#                     overlap += Q[k, i] * Q[k, j]
-#                 end
-#                 R[j, i] = overlap
-#                 @simd ivdep for k = 1:t
-#                     Q[k, j] -= overlap * Q[k, i]
-#                 end
-#             end
-#         else
-#             R[i, i] = _zero
-#         end
-#     end
-#     return (Q, R)
-# end
-
-
-# function solve_upper_triangular!(
-#     b::AbstractVector{T}, R::AbstractMatrix{T}
-# ) where {T}
-#     s = length(b)
-#     @assert (s, s) == size(R)
-#     # NOTE: R is stored transposed, and its diagonal is stored inverted.
-#     _zero = zero(T)
-#     @inbounds for i = s:-1:1
-#         if iszero(R[i, i])
-#             b[i] = _zero
-#         else
-#             overlap = _zero
-#             for j = i+1:s
-#                 overlap += R[j, i] * b[j]
-#             end
-#             b[i] = R[i, i] * (b[i] - overlap)
-#         end
-#     end
-#     return b
-# end
-
-
-# function solve_lower_triangular!(
-#     b::AbstractVector{T}, L::AbstractMatrix{T}
-# ) where {T}
-#     s = length(b)
-#     @assert (s, s) == size(L)
-#     # NOTE: The diagonal of L is stored inverted.
-#     _zero = zero(T)
-#     @inbounds for i = 1:s
-#         if iszero(L[i, i])
-#             b[i] = _zero
-#         else
-#             b[i] *= L[i, i]
-#             for j = i+1:s
-#                 b[j] -= L[j, i] * b[i]
-#             end
-#         end
-#     end
-#     return b
-# end
 
 
 ################################################### RESHAPING COEFFICIENT ARRAYS
@@ -1434,15 +1185,6 @@ end
 # end
 
 
-# function residual_norm_squared(residuals::AbstractVector{T}) where {T}
-#     result = zero(T)
-#     for r in residuals
-#         result += abs2(r)
-#     end
-#     return result
-# end
-
-
 # function (ev::RKOCEvaluatorAE{T})(x::Vector{T}) where {T}
 #     reshape_explicit!(ev.A, x)
 #     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
@@ -1469,33 +1211,6 @@ end
 #     populate_Q!(ev.Q, ev.Phi, ev.table.selected_indices)
 #     gram_schmidt_qr!(ev.Q)
 #     compute_residuals!(ev.residuals, ev.Q, ev.inv_gamma)
-#     return residual_norm_squared(ev.residuals)
-# end
-
-
-# function (ev::RKOCEvaluatorBE{T})(x::Vector{T}) where {T}
-#     reshape_explicit!(ev.A, ev.b, x)
-#     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
-#     compute_residuals!(ev.residuals,
-#         ev.b, ev.Phi, ev.inv_gamma, ev.table.selected_indices)
-#     return residual_norm_squared(ev.residuals)
-# end
-
-
-# function (ev::RKOCEvaluatorBD{T})(x::Vector{T}) where {T}
-#     reshape_diagonally_implicit!(ev.A, ev.b, x)
-#     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
-#     compute_residuals!(ev.residuals,
-#         ev.b, ev.Phi, ev.inv_gamma, ev.table.selected_indices)
-#     return residual_norm_squared(ev.residuals)
-# end
-
-
-# function (ev::RKOCEvaluatorBI{T})(x::Vector{T}) where {T}
-#     reshape_implicit!(ev.A, ev.b, x)
-#     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
-#     compute_residuals!(ev.residuals,
-#         ev.b, ev.Phi, ev.inv_gamma, ev.table.selected_indices)
 #     return residual_norm_squared(ev.residuals)
 # end
 
@@ -1534,117 +1249,6 @@ end
 #     compute_residuals!(residuals, ev.Q, ev.inv_gamma)
 #     return residuals
 # end
-
-
-# function (ev::RKOCResidualEvaluatorBE{T})(
-#     residuals::Vector{T}, x::Vector{T}
-# ) where {T}
-#     reshape_explicit!(ev.A, ev.b, x)
-#     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
-#     compute_residuals!(residuals,
-#         ev.b, ev.Phi, ev.inv_gamma, ev.table.selected_indices)
-#     return residuals
-# end
-
-
-# function (ev::RKOCResidualEvaluatorBD{T})(
-#     residuals::Vector{T}, x::Vector{T}
-# ) where {T}
-#     reshape_diagonally_implicit!(ev.A, ev.b, x)
-#     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
-#     compute_residuals!(residuals,
-#         ev.b, ev.Phi, ev.inv_gamma, ev.table.selected_indices)
-#     return residuals
-# end
-
-
-# function (ev::RKOCResidualEvaluatorBI{T})(
-#     residuals::Vector{T}, x::Vector{T}
-# ) where {T}
-#     reshape_implicit!(ev.A, ev.b, x)
-#     compute_Phi!(ev.Phi, ev.A, ev.table.instructions)
-#     compute_residuals!(residuals,
-#         ev.b, ev.Phi, ev.inv_gamma, ev.table.selected_indices)
-#     return residuals
-# end
-
-
-# @inline (ev::RKOCResidualEvaluatorAE{T})(x::Vector{T}) where {T} =
-#     ev(Vector{T}(undef, length(ev.table.selected_indices)), x)
-# @inline (ev::RKOCResidualEvaluatorAD{T})(x::Vector{T}) where {T} =
-#     ev(Vector{T}(undef, length(ev.table.selected_indices)), x)
-# @inline (ev::RKOCResidualEvaluatorAI{T})(x::Vector{T}) where {T} =
-#     ev(Vector{T}(undef, length(ev.table.selected_indices)), x)
-# @inline (ev::RKOCResidualEvaluatorBE{T})(x::Vector{T}) where {T} =
-#     ev(Vector{T}(undef, length(ev.table.selected_indices)), x)
-# @inline (ev::RKOCResidualEvaluatorBD{T})(x::Vector{T}) where {T} =
-#     ev(Vector{T}(undef, length(ev.table.selected_indices)), x)
-# @inline (ev::RKOCResidualEvaluatorBI{T})(x::Vector{T}) where {T} =
-#     ev(Vector{T}(undef, length(ev.table.selected_indices)), x)
-
-
-# struct RKOCEvaluatorAEAdjoint{T}
-#     ev::RKOCEvaluatorAE{T}
-# end
-# struct RKOCEvaluatorADAdjoint{T}
-#     ev::RKOCEvaluatorAD{T}
-# end
-# struct RKOCEvaluatorAIAdjoint{T}
-#     ev::RKOCEvaluatorAI{T}
-# end
-# struct RKOCEvaluatorBEAdjoint{T}
-#     ev::RKOCEvaluatorBE{T}
-# end
-# struct RKOCEvaluatorBDAdjoint{T}
-#     ev::RKOCEvaluatorBD{T}
-# end
-# struct RKOCEvaluatorBIAdjoint{T}
-#     ev::RKOCEvaluatorBI{T}
-# end
-# struct RKOCResidualEvaluatorAEAdjoint{T}
-#     ev::RKOCResidualEvaluatorAE{T}
-# end
-# struct RKOCResidualEvaluatorADAdjoint{T}
-#     ev::RKOCResidualEvaluatorAD{T}
-# end
-# struct RKOCResidualEvaluatorAIAdjoint{T}
-#     ev::RKOCResidualEvaluatorAI{T}
-# end
-# struct RKOCResidualEvaluatorBEAdjoint{T}
-#     ev::RKOCResidualEvaluatorBE{T}
-# end
-# struct RKOCResidualEvaluatorBDAdjoint{T}
-#     ev::RKOCResidualEvaluatorBD{T}
-# end
-# struct RKOCResidualEvaluatorBIAdjoint{T}
-#     ev::RKOCResidualEvaluatorBI{T}
-# end
-
-
-# @inline Base.adjoint(ev::RKOCEvaluatorAE{T}) where {T} =
-#     RKOCEvaluatorAEAdjoint{T}(ev)
-# @inline Base.adjoint(ev::RKOCEvaluatorAD{T}) where {T} =
-#     RKOCEvaluatorADAdjoint{T}(ev)
-# @inline Base.adjoint(ev::RKOCEvaluatorAI{T}) where {T} =
-#     RKOCEvaluatorAIAdjoint{T}(ev)
-# @inline Base.adjoint(ev::RKOCEvaluatorBE{T}) where {T} =
-#     RKOCEvaluatorBEAdjoint{T}(ev)
-# @inline Base.adjoint(ev::RKOCEvaluatorBD{T}) where {T} =
-#     RKOCEvaluatorBDAdjoint{T}(ev)
-# @inline Base.adjoint(ev::RKOCEvaluatorBI{T}) where {T} =
-#     RKOCEvaluatorBIAdjoint{T}(ev)
-# @inline Base.adjoint(ev::RKOCResidualEvaluatorAE{T}) where {T} =
-#     RKOCResidualEvaluatorAEAdjoint{T}(ev)
-# @inline Base.adjoint(ev::RKOCResidualEvaluatorAD{T}) where {T} =
-#     RKOCResidualEvaluatorADAdjoint{T}(ev)
-# @inline Base.adjoint(ev::RKOCResidualEvaluatorAI{T}) where {T} =
-#     RKOCResidualEvaluatorAIAdjoint{T}(ev)
-# @inline Base.adjoint(ev::RKOCResidualEvaluatorBE{T}) where {T} =
-#     RKOCResidualEvaluatorBEAdjoint{T}(ev)
-# @inline Base.adjoint(ev::RKOCResidualEvaluatorBD{T}) where {T} =
-#     RKOCResidualEvaluatorBDAdjoint{T}(ev)
-# @inline Base.adjoint(ev::RKOCResidualEvaluatorBI{T}) where {T} =
-#     RKOCResidualEvaluatorBIAdjoint{T}(ev)
 
 
 # function (adj::RKOCEvaluatorAEAdjoint{T})(g::Vector{T}, x::Vector{T}) where {T}
@@ -1878,12 +1482,6 @@ end
 #             k += 1
 #         end
 #     end
-#     for j = 1:s
-#         for (i, m) in pairs(adj.ev.table.selected_indices)
-#             @inbounds jacobian[i, k] = adj.ev.Phi[j, m]
-#         end
-#         k += 1
-#     end
 #     return jacobian
 # end
 
@@ -1942,32 +1540,6 @@ end
 #     end
 #     return jacobian
 # end
-
-
-# @inline (adj::RKOCEvaluatorAEAdjoint{T})(x::Vector{T}) where {T} =
-#     adj(similar(x), x)
-# @inline (adj::RKOCEvaluatorADAdjoint{T})(x::Vector{T}) where {T} =
-#     adj(similar(x), x)
-# @inline (adj::RKOCEvaluatorAIAdjoint{T})(x::Vector{T}) where {T} =
-#     adj(similar(x), x)
-# @inline (adj::RKOCEvaluatorBEAdjoint{T})(x::Vector{T}) where {T} =
-#     adj(similar(x), x)
-# @inline (adj::RKOCEvaluatorBDAdjoint{T})(x::Vector{T}) where {T} =
-#     adj(similar(x), x)
-# @inline (adj::RKOCEvaluatorBIAdjoint{T})(x::Vector{T}) where {T} =
-#     adj(similar(x), x)
-# @inline (adj::RKOCResidualEvaluatorAEAdjoint{T})(x::Vector{T}) where {T} =
-#     adj(Matrix{T}(undef, length(adj.ev.table.selected_indices), length(x)), x)
-# @inline (adj::RKOCResidualEvaluatorADAdjoint{T})(x::Vector{T}) where {T} =
-#     adj(Matrix{T}(undef, length(adj.ev.table.selected_indices), length(x)), x)
-# @inline (adj::RKOCResidualEvaluatorAIAdjoint{T})(x::Vector{T}) where {T} =
-#     adj(Matrix{T}(undef, length(adj.ev.table.selected_indices), length(x)), x)
-# @inline (adj::RKOCResidualEvaluatorBEAdjoint{T})(x::Vector{T}) where {T} =
-#     adj(Matrix{T}(undef, length(adj.ev.table.selected_indices), length(x)), x)
-# @inline (adj::RKOCResidualEvaluatorBDAdjoint{T})(x::Vector{T}) where {T} =
-#     adj(Matrix{T}(undef, length(adj.ev.table.selected_indices), length(x)), x)
-# @inline (adj::RKOCResidualEvaluatorBIAdjoint{T})(x::Vector{T}) where {T} =
-#     adj(Matrix{T}(undef, length(adj.ev.table.selected_indices), length(x)), x)
 
 
 end # module RungeKuttaToolKit

@@ -255,7 +255,8 @@ end
 
 
 all_rooted_trees(n::Int; tree_ordering::Symbol=:reverse_lexicographic) =
-    reduce(vcat, rooted_trees(i; tree_ordering=tree_ordering) for i = 1:n)
+    reduce(vcat, rooted_trees(i; tree_ordering=tree_ordering) for i = 1:n;
+        init=LevelSequence[])
 
 
 ################################################## COMBINATORICS OF ROOTED TREES
@@ -435,17 +436,10 @@ function necessary_subtrees(trees::Vector{LevelSequence})
 end
 
 
-"""
-    RungeKuttaToolKit.ButcherInstructions.build_instructions(
-        trees::Vector{LevelSequence};
-        optimize::Bool=true,
-        sort_by_depth::Bool=true,
-    ) -> instructions, indices
-"""
 function build_instructions(
     trees::Vector{LevelSequence};
-    optimize::Bool=true,
-    sort_by_depth::Bool=true,
+    optimize::Bool,
+    sort_by_depth::Bool,
 )
     @assert allunique(trees)
     instructions = ButcherInstruction[]
@@ -501,7 +495,9 @@ struct ButcherInstructionTable
 end
 
 
-function compute_reverse_relationships(instructions::Vector{ButcherInstruction})
+function compute_reverse_relationships(
+    instructions::Vector{ButcherInstruction}
+)
     extensions = [NULL_INDEX for _ in instructions]
     rooted_sums = [Pair{Int,Int}[] for _ in instructions]
     for (i, instruction) in pairs(instructions)
@@ -518,15 +514,20 @@ function compute_reverse_relationships(instructions::Vector{ButcherInstruction})
 end
 
 
-function ButcherInstructionTable(trees::Vector{LevelSequence})
-    instructions, selected_indices = build_instructions(trees)
+function ButcherInstructionTable(
+    trees::Vector{LevelSequence};
+    optimize::Bool,
+    sort_by_depth::Bool,
+)
+    instructions, selected_indices = build_instructions(trees;
+        optimize=optimize, sort_by_depth=sort_by_depth)
     source_indices = [NULL_INDEX for _ in instructions]
     for (i, j) in pairs(selected_indices)
         source_indices[j] = i
     end
     extension_indices, rooted_sum_lists =
         compute_reverse_relationships(instructions)
-    rooted_sum_indices = reduce(vcat, rooted_sum_lists)
+    rooted_sum_indices = reduce(vcat, rooted_sum_lists; init=Pair{Int,Int}[])
     end_indices = cumsum(length.(rooted_sum_lists))
     start_indices = vcat([1], end_indices[1:end-1] .+ 1)
     rooted_sum_ranges = UnitRange{Int}.(start_indices, end_indices)

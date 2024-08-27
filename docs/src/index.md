@@ -1,17 +1,9 @@
 # RungeKuttaToolKit.jl Documentation
 
 ```@docs
-RungeKuttaToolKit.ButcherInstructions.build_instructions
+RKOCEvaluator
 ```
 
 ```@docs
-RungeKuttaToolKit.compute_Phi!
-```
-
-```@docs
-RungeKuttaToolKit.compute_residuals!
-```
-
-```@docs
-RungeKuttaToolKit.pushforward_dPhi!
+RungeKuttaToolKit.RKOCAdjoint
 ```
