@@ -4,6 +4,31 @@ using StatsBase: sample
 using Test
 
 
+const NUMERIC_TYPES = [
+    Float16, Float32, Float64, BigFloat,
+    Float64x1, Float64x2, Float64x3, Float64x4,
+    Float64x5, Float64x6, Float64x7, Float64x8,]
+
+
+function maximum_relative_difference(
+    xs::AbstractArray{T},
+    ys::AbstractArray{T},
+) where {T}
+    @assert axes(xs) == axes(ys)
+    result = zero(T)
+    for (x, y) in zip(xs, ys)
+        if !(iszero(x) & iszero(y))
+            half_diff = abs(x - y) / (abs(x) + abs(y))
+            diff = half_diff + half_diff
+            if diff > result
+                result = diff
+            end
+        end
+    end
+    return result
+end
+
+
 ################################################################################
 
 
@@ -129,13 +154,6 @@ function test_instructions(::Type{T}, order::Int) where {T}
 end
 
 
-NUMERIC_TYPES = [
-    Float16, Float32, Float64, BigFloat,
-    Float64x1, Float64x2, Float64x3, Float64x4,
-    Float64x5, Float64x6, Float64x7, Float64x8,
-]
-
-
 @testset "RKOCEvaluator{T}($order, num_stages)" for order = 0:10
     for T in NUMERIC_TYPES
         test_instructions(T, order)
@@ -184,25 +202,6 @@ end
 
 
 ################################################################################
-
-
-function maximum_relative_difference(
-    xs::AbstractArray{T},
-    ys::AbstractArray{T},
-) where {T}
-    @assert axes(xs) == axes(ys)
-    result = zero(T)
-    for (x, y) in zip(xs, ys)
-        if !(iszero(x) & iszero(y))
-            half_diff = abs(x - y) / (abs(x) + abs(y))
-            diff = half_diff + half_diff
-            if diff > result
-                result = diff
-            end
-        end
-    end
-    return result
-end
 
 
 function test_directional_derivatives(::Type{T}) where {T}
@@ -272,7 +271,11 @@ function test_partial_derivatives(::Type{T}) where {T}
         j = rand(1:num_stages)
 
         dresiduals_fast = Vector{T}(undef, length(trees))
-        ev'(dresiduals_fast, A, i, j, b)
+        if isbitstype(T)
+            @test iszero(@allocated ev'(dresiduals_fast, A, i, j, b))
+        else
+            ev'(dresiduals_fast, A, i, j, b)
+        end
 
         dA = zeros(T, num_stages, num_stages)
         db = zeros(T, num_stages)
@@ -283,6 +286,20 @@ function test_partial_derivatives(::Type{T}) where {T}
 
         @test maximum_relative_difference(
             dresiduals_fast, dresiduals_slow) < _4_eps
+
+        k = rand(1:num_stages)
+        if isbitstype(T)
+            @test iszero(@allocated ev'(dresiduals_fast, A, k))
+        else
+            ev'(dresiduals_fast, A, k)
+        end
+
+        dA[i, j] = zero(T)
+        db[k] = one(T)
+        ev'(dresiduals_slow, A, dA, b, db)
+
+        @test iszero(maximum_relative_difference(
+            dresiduals_fast, dresiduals_slow))
     end
 end
 
