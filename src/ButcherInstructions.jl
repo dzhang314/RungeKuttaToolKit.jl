@@ -272,6 +272,7 @@ end
 
 
 function butcher_symmetry(tree::LevelSequence)
+    @assert is_canonical(tree)
     leg_counts = LevelSequenceDict()
     for leg in extract_legs(tree)
         if haskey(leg_counts, leg)

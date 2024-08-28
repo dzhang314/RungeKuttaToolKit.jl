@@ -16,7 +16,7 @@ export LevelSequence, ButcherInstruction, ButcherInstructionTable,
 ####################################################### EVALUATOR DATA STRUCTURE
 
 
-export RKOCEvaluator
+export RKOCEvaluator, WeightedRKOCEvaluator
 
 
 struct RKOCEvaluator{T}
@@ -24,6 +24,15 @@ struct RKOCEvaluator{T}
     Phi::Matrix{T}
     dPhi::Matrix{T}
     inv_gamma::Vector{T}
+end
+
+
+struct WeightedRKOCEvaluator{T}
+    table::ButcherInstructionTable
+    Phi::Matrix{T}
+    dPhi::Matrix{T}
+    inv_gamma::Vector{T}
+    weights::Vector{T}
 end
 
 
@@ -68,6 +77,24 @@ function RKOCEvaluator{T}(
 end
 
 
+function WeightedRKOCEvaluator{T}(
+    trees::AbstractVector{LevelSequence},
+    weights::AbstractVector{T},
+    num_stages::Int;
+    optimize::Bool=true,
+    sort_by_depth::Bool=true,
+) where {T}
+    @assert axes(trees) == axes(weights)
+    table = ButcherInstructionTable(trees;
+        optimize=optimize, sort_by_depth=sort_by_depth)
+    return WeightedRKOCEvaluator{T}(table,
+        Matrix{T}(undef, num_stages, length(table.instructions)),
+        Matrix{T}(undef, num_stages, length(table.instructions)),
+        [inv(T(butcher_density(tree))) for tree in trees],
+        collect(weights))
+end
+
+
 """
     RKOCEvaluator{T}(order::Int, num_stages::Int) -> RKOCEvaluator{T}
 
@@ -81,6 +108,14 @@ efficiency of generating all rooted trees.
 @inline RKOCEvaluator{T}(order::Int, num_stages::Int) where {T} =
     RKOCEvaluator{T}(all_rooted_trees(order), num_stages;
         optimize=false, sort_by_depth=false)
+
+
+function WeightedRKOCEvaluator{T}(order::Int, num_stages::Int) where {T}
+    trees = all_rooted_trees(order)
+    weights = [inv(T(butcher_symmetry(tree))) for tree in trees]
+    return WeightedRKOCEvaluator{T}(trees, weights, num_stages;
+        optimize=false, sort_by_depth=false)
+end
 
 
 ################################################################################
@@ -102,11 +137,28 @@ function get_axes(ev::RKOCEvaluator{T}) where {T}
 end
 
 
+function get_axes(ev::WeightedRKOCEvaluator{T}) where {T}
+    stage_axis = axes(ev.Phi, 1)
+    internal_axis = axes(ev.Phi, 2)
+    output_axis = axes(ev.inv_gamma, 1)
+    @assert axes(ev.table.instructions) == (internal_axis,)
+    @assert axes(ev.table.selected_indices) == (output_axis,)
+    @assert axes(ev.table.source_indices) == (internal_axis,)
+    @assert axes(ev.table.extension_indices) == (internal_axis,)
+    @assert axes(ev.table.rooted_sum_ranges) == (internal_axis,)
+    @assert axes(ev.Phi) == (stage_axis, internal_axis)
+    @assert axes(ev.dPhi) == (stage_axis, internal_axis)
+    @assert axes(ev.inv_gamma) == (output_axis,)
+    @assert axes(ev.weights) == (output_axis,)
+    return (stage_axis, internal_axis, output_axis)
+end
+
+
 ################################################### PHI AND RESIDUAL COMPUTATION
 
 
 function compute_Phi!(
-    ev::RKOCEvaluator{T},
+    ev::Union{RKOCEvaluator{T},WeightedRKOCEvaluator{T}},
     A::AbstractMatrix{T},
 ) where {T}
 
@@ -182,6 +234,35 @@ function compute_residuals!(
 end
 
 
+function compute_residuals!(
+    residuals::AbstractVector{T},
+    ev::WeightedRKOCEvaluator{T},
+    b::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, output_axis = get_axes(ev)
+    @assert axes(residuals) == (output_axis,)
+    @assert axes(b) == (stage_axis,)
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    # Compute residuals.
+    @inbounds for (i, k) in pairs(ev.table.selected_indices)
+        # Compute dot product without SIMD for determinism.
+        lhs = _zero
+        for j in stage_axis
+            lhs += b[j] * ev.Phi[j, k]
+        end
+        # Subtract inv_gamma at the end for improved numerical stability.
+        residuals[i] = ev.weights[i] * (lhs - ev.inv_gamma[i])
+    end
+
+    return residuals
+end
+
+
 """
     (ev::RKOCEvaluator{T})(
         residuals::AbstractVector{T},
@@ -208,6 +289,16 @@ Here, ``|T|`` denotes the number of rooted trees encoded by `ev`, and ``s``
 denotes the number of stages specified when constructing `ev`.
 """
 function (ev::RKOCEvaluator{T})(
+    residuals::AbstractVector{T},
+    A::AbstractMatrix{T},
+    b::AbstractVector{T}
+) where {T}
+    compute_Phi!(ev, A)
+    return compute_residuals!(residuals, ev, b)
+end
+
+
+function (ev::WeightedRKOCEvaluator{T})(
     residuals::AbstractVector{T},
     A::AbstractMatrix{T},
     b::AbstractVector{T}
@@ -245,6 +336,34 @@ function residual_sum_of_squares(
 end
 
 
+function residual_sum_of_squares(
+    ev::WeightedRKOCEvaluator{T},
+    b::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, _ = get_axes(ev)
+    @assert axes(b) == (stage_axis,)
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    # Compute sum of squared residuals.
+    result = _zero
+    @inbounds for (i, k) in pairs(ev.table.selected_indices)
+        # Compute dot product without SIMD for determinism.
+        lhs = _zero
+        for j in stage_axis
+            lhs += b[j] * ev.Phi[j, k]
+        end
+        # Subtract inv_gamma at the end for improved numerical stability.
+        result += abs2(ev.weights[i] * (lhs - ev.inv_gamma[i]))
+    end
+
+    return result
+end
+
+
 """
     (ev::RKOCEvaluator{T})(
         A::AbstractMatrix{T},
@@ -274,6 +393,15 @@ function (ev::RKOCEvaluator{T})(
 end
 
 
+function (ev::WeightedRKOCEvaluator{T})(
+    A::AbstractMatrix{T},
+    b::AbstractVector{T},
+) where {T}
+    compute_Phi!(ev, A)
+    return residual_sum_of_squares(ev, b)
+end
+
+
 ######################################################### ADJOINT DATA STRUCTURE
 
 
@@ -285,11 +413,20 @@ end
 @inline Base.adjoint(ev::RKOCEvaluator{T}) where {T} = RKOCAdjoint{T}(ev)
 
 
+struct WeightedRKOCAdjoint{T}
+    ev::WeightedRKOCEvaluator{T}
+end
+
+
+@inline Base.adjoint(ev::WeightedRKOCEvaluator{T}) where {T} =
+    WeightedRKOCAdjoint{T}(ev)
+
+
 ############################## DIRECTIONAL DERIVATIVE COMPUTATION (FORWARD-MODE)
 
 
 function pushforward_dPhi!(
-    ev::RKOCEvaluator{T},
+    ev::Union{RKOCEvaluator{T},WeightedRKOCEvaluator{T}},
     A::AbstractMatrix{T},
     dA::AbstractMatrix{T},
 ) where {T}
@@ -365,6 +502,35 @@ function pushforward_dresiduals!(
 end
 
 
+function pushforward_dresiduals!(
+    dresiduals::AbstractVector{T},
+    ev::WeightedRKOCEvaluator{T},
+    b::AbstractVector{T},
+    db::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, output_axis = get_axes(ev)
+    @assert axes(dresiduals) == (output_axis,)
+    @assert axes(b) == (stage_axis,)
+    @assert axes(db) == (stage_axis,)
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    @inbounds for (i, k) in pairs(ev.table.selected_indices)
+        # Compute dot product without SIMD for determinism.
+        dlhs = _zero
+        for j in stage_axis
+            dlhs += db[j] * ev.Phi[j, k] + b[j] * ev.dPhi[j, k]
+        end
+        dresiduals[i] = ev.weights[i] * dlhs
+    end
+
+    return dresiduals
+end
+
+
 """
     (adj::RKOCAdjoint{T})(
         dresiduals::AbstractVector{T},
@@ -414,11 +580,24 @@ function (adj::RKOCAdjoint{T})(
 end
 
 
+function (adj::WeightedRKOCAdjoint{T})(
+    dresiduals::AbstractVector{T},
+    A::AbstractMatrix{T},
+    dA::AbstractMatrix{T},
+    b::AbstractVector{T},
+    db::AbstractVector{T},
+) where {T}
+    compute_Phi!(adj.ev, A)
+    pushforward_dPhi!(adj.ev, A, dA)
+    return pushforward_dresiduals!(dresiduals, adj.ev, b, db)
+end
+
+
 ################################## PARTIAL DERIVATIVE COMPUTATION (FORWARD-MODE)
 
 
 function pushforward_dPhi!(
-    ev::RKOCEvaluator{T},
+    ev::Union{RKOCEvaluator{T},WeightedRKOCEvaluator{T}},
     A::AbstractMatrix{T},
     u::Int,
     v::Int,
@@ -494,6 +673,33 @@ function pushforward_dresiduals!(
 end
 
 
+function pushforward_dresiduals!(
+    dresiduals::AbstractVector{T},
+    ev::WeightedRKOCEvaluator{T},
+    b::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, output_axis = get_axes(ev)
+    @assert axes(dresiduals) == (output_axis,)
+    @assert axes(b) == (stage_axis,)
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    @inbounds for (i, k) in pairs(ev.table.selected_indices)
+        # Compute dot product without SIMD for determinism.
+        dlhs = _zero
+        for j in stage_axis
+            dlhs += b[j] * ev.dPhi[j, k]
+        end
+        dresiduals[i] = ev.weights[i] * dlhs
+    end
+
+    return dresiduals
+end
+
+
 """
     (adj::RKOCAdjoint{T})(
         dresiduals::AbstractVector{T},
@@ -530,7 +736,20 @@ This method uses an optimized algorithm that should be faster than
 entry of ``A``. It may produce slightly different results due to the
 non-associative nature of floating-point arithmetic.
 """
-function (adj::RKOCAdjoint)(
+function (adj::RKOCAdjoint{T})(
+    dresiduals::AbstractVector{T},
+    A::AbstractMatrix{T},
+    i::Int,
+    j::Int,
+    b::AbstractVector{T},
+) where {T}
+    compute_Phi!(adj.ev, A)
+    pushforward_dPhi!(adj.ev, A, i, j)
+    return pushforward_dresiduals!(dresiduals, adj.ev, b)
+end
+
+
+function (adj::WeightedRKOCAdjoint{T})(
     dresiduals::AbstractVector{T},
     A::AbstractMatrix{T},
     i::Int,
@@ -575,7 +794,7 @@ This method uses an optimized algorithm that should be faster than
 entry of ``\\mathbf{b}``. It may produce slightly different results due to the
 non-associative nature of floating-point arithmetic.
 """
-function (adj::RKOCAdjoint)(
+function (adj::RKOCAdjoint{T})(
     dresiduals::AbstractVector{T},
     A::AbstractMatrix{T},
     i::Int,
@@ -590,6 +809,27 @@ function (adj::RKOCAdjoint)(
     # Extract entries of Phi.
     @inbounds for (j, k) in pairs(adj.ev.table.selected_indices)
         dresiduals[j] = adj.ev.Phi[i, k]
+    end
+
+    return dresiduals
+end
+
+
+function (adj::WeightedRKOCAdjoint{T})(
+    dresiduals::AbstractVector{T},
+    A::AbstractMatrix{T},
+    i::Int,
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, _ = get_axes(adj.ev)
+    @assert i in stage_axis
+
+    compute_Phi!(adj.ev, A)
+
+    # Extract entries of Phi.
+    @inbounds for (j, k) in pairs(adj.ev.table.selected_indices)
+        dresiduals[j] = adj.ev.weights[j] * adj.ev.Phi[i, k]
     end
 
     return dresiduals

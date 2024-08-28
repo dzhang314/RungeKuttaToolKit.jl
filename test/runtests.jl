@@ -216,7 +216,9 @@ function test_directional_derivatives(::Type{T}) where {T}
     for num_stages = 0:20
         trees = sample(all_trees, rand(1:length(all_trees));
             replace=false, ordered=false)
+        weights = rand(T, length(trees))
         ev = RKOCEvaluator{T}(trees, num_stages)
+        wev = WeightedRKOCEvaluator{T}(trees, weights, num_stages)
 
         A = rand(T, num_stages, num_stages)
         b = rand(T, num_stages)
@@ -237,6 +239,21 @@ function test_directional_derivatives(::Type{T}) where {T}
         dresiduals_numerical = (residuals_hi - residuals_lo) / (h + h)
 
         # num_stages == 1 is pathological for some reason.
+        if num_stages != 1
+            @test maximum_relative_difference(
+                dresiduals_analytic, dresiduals_numerical) < _4_sqrt_eps
+        end
+
+        if isbitstype(T)
+            @test iszero(@allocated wev'(dresiduals_analytic, A, dA, b, db))
+        else
+            wev'(dresiduals_analytic, A, dA, b, db)
+        end
+
+        wev(residuals_hi, A + h * dA, b + h * db)
+        wev(residuals_lo, A - h * dA, b - h * db)
+        dresiduals_numerical = (residuals_hi - residuals_lo) / (h + h)
+
         if num_stages != 1
             @test maximum_relative_difference(
                 dresiduals_analytic, dresiduals_numerical) < _4_sqrt_eps
@@ -263,7 +280,9 @@ function test_partial_derivatives(::Type{T}) where {T}
     for num_stages = 1:20
         trees = sample(all_trees, rand(1:length(all_trees));
             replace=false, ordered=false)
+        weights = rand(T, length(trees))
         ev = RKOCEvaluator{T}(trees, num_stages)
+        wev = WeightedRKOCEvaluator{T}(trees, weights, num_stages)
 
         A = rand(T, num_stages, num_stages)
         b = rand(T, num_stages)
@@ -287,6 +306,17 @@ function test_partial_derivatives(::Type{T}) where {T}
         @test maximum_relative_difference(
             dresiduals_fast, dresiduals_slow) < _4_eps
 
+        if isbitstype(T)
+            @test iszero(@allocated wev'(dresiduals_fast, A, i, j, b))
+        else
+            wev'(dresiduals_fast, A, i, j, b)
+        end
+
+        wev'(dresiduals_slow, A, dA, b, db)
+
+        @test maximum_relative_difference(
+            dresiduals_fast, dresiduals_slow) < _4_eps
+
         k = rand(1:num_stages)
         if isbitstype(T)
             @test iszero(@allocated ev'(dresiduals_fast, A, k))
@@ -297,6 +327,17 @@ function test_partial_derivatives(::Type{T}) where {T}
         dA[i, j] = zero(T)
         db[k] = one(T)
         ev'(dresiduals_slow, A, dA, b, db)
+
+        @test iszero(maximum_relative_difference(
+            dresiduals_fast, dresiduals_slow))
+
+        if isbitstype(T)
+            @test iszero(@allocated wev'(dresiduals_fast, A, k))
+        else
+            wev'(dresiduals_fast, A, k)
+        end
+
+        wev'(dresiduals_slow, A, dA, b, db)
 
         @test iszero(maximum_relative_difference(
             dresiduals_fast, dresiduals_slow))
