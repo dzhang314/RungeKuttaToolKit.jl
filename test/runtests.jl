@@ -165,6 +165,7 @@ end
 
 
 function test_residuals(::Type{T}, method::Function, order::Int) where {T}
+
     _zero = zero(T)
     _eps = eps(T)
     _eps_2 = _eps * _eps
@@ -189,6 +190,7 @@ function test_residuals(::Type{T}, method::Function, order::Int) where {T}
     @test all(abs(residual) < _eps for residual in residuals)
 
     return nothing
+
 end
 
 
@@ -214,6 +216,7 @@ function test_directional_derivatives(::Type{T}) where {T}
     all_trees = all_rooted_trees(10)
 
     for num_stages = 0:20
+
         trees = sample(all_trees, rand(1:length(all_trees));
             replace=false, ordered=false)
         weights = rand(T, length(trees))
@@ -258,7 +261,9 @@ function test_directional_derivatives(::Type{T}) where {T}
             @test maximum_relative_difference(
                 dresiduals_analytic, dresiduals_numerical) < _4_sqrt_eps
         end
+
     end
+
 end
 
 
@@ -278,6 +283,7 @@ function test_partial_derivatives(::Type{T}) where {T}
     all_trees = all_rooted_trees(10)
 
     for num_stages = 1:20
+
         trees = sample(all_trees, rand(1:length(all_trees));
             replace=false, ordered=false)
         weights = rand(T, length(trees))
@@ -341,7 +347,9 @@ function test_partial_derivatives(::Type{T}) where {T}
 
         @test iszero(maximum_relative_difference(
             dresiduals_fast, dresiduals_slow))
+
     end
+
 end
 
 
@@ -365,9 +373,12 @@ function test_gradient(::Type{T}) where {T}
     all_trees = all_rooted_trees(10)
 
     for num_stages = 0:8
+
         trees = sample(all_trees, rand(1:length(all_trees));
             replace=false, ordered=false)
+        weights = rand(T, length(trees))
         ev = RKOCEvaluator{T}(trees, num_stages)
+        wev = WeightedRKOCEvaluator{T}(trees, weights, num_stages)
 
         A = rand(T, num_stages, num_stages)
         b = rand(T, num_stages)
@@ -403,7 +414,35 @@ function test_gradient(::Type{T}) where {T}
             gA_analytic, gA_numerical) < tolerance
         @test maximum_relative_difference(
             gb_analytic, gb_numerical) < tolerance
+
+        if isbitstype(T)
+            @test iszero(@allocated wev'(gA_analytic, gb_analytic, A, b))
+        else
+            wev'(gA_analytic, gb_analytic, A, b)
+        end
+
+        for i = 1:num_stages
+            for j = 1:num_stages
+                dA[i, j] = one(T)
+                gA_numerical[i, j] = (
+                    wev(A + h * dA, b) - wev(A - h * dA, b)) / (h + h)
+                dA[i, j] = zero(T)
+            end
+        end
+        for k = 1:num_stages
+            db[k] = one(T)
+            gb_numerical[k] = (
+                wev(A, b + h * db) - wev(A, b - h * db)) / (h + h)
+            db[k] = zero(T)
+        end
+
+        @test maximum_relative_difference(
+            gA_analytic, gA_numerical) < tolerance
+        @test maximum_relative_difference(
+            gb_analytic, gb_numerical) < tolerance
+
     end
+
 end
 
 

@@ -876,8 +876,46 @@ function pullback_dPhi_from_b!(
 end
 
 
+function pullback_dPhi_from_b!(
+    ev::WeightedRKOCEvaluator{T},
+    b::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, _ = get_axes(ev)
+    @assert axes(b) == (stage_axis,)
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    @inbounds for (k, i) in Iterators.reverse(pairs(ev.table.source_indices))
+        if i == NULL_INDEX
+            @simd ivdep for j in stage_axis
+                ev.dPhi[j, k] = _zero
+            end
+        else
+            # Compute dot product without SIMD for determinism.
+            lhs = _zero
+            for j in stage_axis
+                lhs += b[j] * ev.Phi[j, k]
+            end
+            # Subtract inv_gamma at the end for improved numerical stability.
+            weight = ev.weights[i]
+            residual = (weight * weight) * (lhs - ev.inv_gamma[i])
+            # Double residual. (Addition is faster than multiplication by two.)
+            twice_residual = residual + residual
+            @simd ivdep for j in stage_axis
+                ev.dPhi[j, k] = twice_residual * b[j]
+            end
+        end
+    end
+
+    return ev
+end
+
+
 function pullback_dPhi_from_A!(
-    ev::RKOCEvaluator{T},
+    ev::Union{RKOCEvaluator{T},WeightedRKOCEvaluator{T}},
     A::AbstractMatrix{T},
 ) where {T}
 
@@ -911,7 +949,7 @@ end
 
 function pullback_dA!(
     dA::AbstractMatrix{T},
-    ev::RKOCEvaluator{T},
+    ev::Union{RKOCEvaluator{T},WeightedRKOCEvaluator{T}},
 ) where {T}
 
     # Validate array dimensions.
@@ -989,6 +1027,52 @@ function pullback_db!(
 end
 
 
+function pullback_db!(
+    db::AbstractVector{T},
+    ev::WeightedRKOCEvaluator{T},
+    b::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, _ = get_axes(ev)
+    @assert axes(db) == (stage_axis,)
+    @assert axes(b) == (stage_axis,)
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    @inbounds begin
+
+        # Initialize db to zero.
+        @simd ivdep for i in stage_axis
+            db[i] = _zero
+        end
+
+        for (i, k) in pairs(ev.table.selected_indices)
+            # Compute dot product without SIMD for determinism.
+            lhs = _zero
+            for j in stage_axis
+                lhs += b[j] * ev.Phi[j, k]
+            end
+            # Subtract inv_gamma at the end for improved numerical stability.
+            weight = ev.weights[i]
+            residual = (weight * weight) * (lhs - ev.inv_gamma[i])
+            @simd ivdep for j in stage_axis
+                db[j] += residual * ev.Phi[j, k]
+            end
+        end
+
+        # Double db. (Addition is faster than multiplication by two.)
+        @simd ivdep for i in stage_axis
+            db[i] += db[i]
+        end
+
+    end
+
+    return db
+end
+
+
 """
     (adj::RKOCAdjoint{T})(
         dA::AbstractMatrix{T},
@@ -1019,6 +1103,21 @@ over a set of rooted trees ``T`` encoded by an `RKOCEvaluator`.
 Here, ``s`` denotes the number of stages specified when constructing `ev`.
 """
 function (adj::RKOCAdjoint{T})(
+    dA::AbstractMatrix{T},
+    db::AbstractVector{T},
+    A::AbstractMatrix{T},
+    b::AbstractVector{T},
+) where {T}
+    compute_Phi!(adj.ev, A)
+    pullback_dPhi_from_b!(adj.ev, b)
+    pullback_dPhi_from_A!(adj.ev, A)
+    pullback_dA!(dA, adj.ev)
+    pullback_db!(db, adj.ev, b)
+    return (dA, db)
+end
+
+
+function (adj::WeightedRKOCAdjoint{T})(
     dA::AbstractMatrix{T},
     db::AbstractVector{T},
     A::AbstractMatrix{T},
