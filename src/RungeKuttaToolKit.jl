@@ -77,6 +77,36 @@ function RKOCEvaluator{T}(
 end
 
 
+"""
+    WeightedRKOCEvaluator{T}(
+        trees::AbstractVector{LevelSequence},
+        weights::AbstractVector{T},
+        num_stages::Int;
+        optimize::Bool=true,
+        sort_by_depth::Bool=true,
+    ) -> WeightedRKOCEvaluator{T}
+
+Construct a `WeightedRKOCEvaluator` that encodes a given sequence ``T`` of
+rooted trees ``t \\in T`` with associated weights ``w_t``.
+
+# Arguments
+- `trees`: input vector of rooted trees in `LevelSequence` representation.
+- `weights`: input vector of weights associated with each rooted tree. Must
+    have the same shape as `trees`.
+- `num_stages`: number of stages (i.e., size of the Butcher tableau). Must be
+    known at construction time to allocate internal workspace arrays.
+- `optimize`: if `true`, perform common subtree elimination. This may improve
+    performance in cases where `trees` is not the complete set of all rooted
+    trees up to a certain order.
+- `sort_by_depth`: if `true`, permute internal workspace arrays so that
+    intermediate results are calculated in an order that enables parallel
+    execution. This has no effect on single-threaded execution and is provided
+    for forward compatibility with future parallel implementations.
+
+Note that different permutations of `trees`, in addition to different values
+of `optimize` and `sort_by_depth`, may yield slightly different results due to
+the non-associative nature of floating-point arithmetic.
+"""
 function WeightedRKOCEvaluator{T}(
     trees::AbstractVector{LevelSequence},
     weights::AbstractVector{T},
@@ -110,6 +140,21 @@ efficiency of generating all rooted trees.
         optimize=false, sort_by_depth=false)
 
 
+"""
+    WeightedRKOCEvaluator{T}(
+        order::Int,
+        num_stages::Int,
+    ) -> WeightedRKOCEvaluator{T}
+
+Construct a `WeightedRKOCEvaluator` that encodes all rooted trees ``t`` having
+at most `order` vertices with associated weights ``w_t = 1/\\sigma(t)``. Under
+this choice of weight, the residuals the become principal error coefficients
+of a Runge--Kutta method.
+
+By default, rooted trees are generated in graded reverse lexicographic order
+of their level sequence representation. This specific ordering maximizes the
+efficiency of generating all rooted trees.
+"""
 function WeightedRKOCEvaluator{T}(order::Int, num_stages::Int) where {T}
     trees = all_rooted_trees(order)
     weights = [inv(T(butcher_symmetry(tree))) for tree in trees]
@@ -298,6 +343,18 @@ function (ev::RKOCEvaluator{T})(
 end
 
 
+"""
+    (ev::WeightedRKOCEvaluator{T})(
+        residuals::AbstractVector{T},
+        A::AbstractMatrix{T},
+        b::AbstractVector{T}
+    ) -> AbstractVector{T}
+
+Compute weighted residuals of the Runge--Kutta order conditions
+``\\{ w_t (\\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t)) : t \\in T \\}``
+for a given Butcher tableau ``(A, \\mathbf{b})``
+over a set of rooted trees ``T`` with associated weights ``w_t``.
+"""
 function (ev::WeightedRKOCEvaluator{T})(
     residuals::AbstractVector{T},
     A::AbstractMatrix{T},
@@ -393,6 +450,18 @@ function (ev::RKOCEvaluator{T})(
 end
 
 
+"""
+    (ev::WeightedRKOCEvaluator{T})(
+        A::AbstractMatrix{T},
+        b::AbstractVector{T}
+    ) -> T
+
+Compute the weighted sum of squared residuals
+of the Runge--Kutta order conditions
+``\\sum_{t \\in T} w_t^2 (\\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t))^2``
+for a given Butcher tableau ``(A, \\mathbf{b})``
+over a set of rooted trees ``T`` with associated weights ``w_t``.
+"""
 function (ev::WeightedRKOCEvaluator{T})(
     A::AbstractMatrix{T},
     b::AbstractVector{T},
@@ -580,6 +649,22 @@ function (adj::RKOCAdjoint{T})(
 end
 
 
+"""
+    (adj::WeightedRKOCAdjoint{T})(
+        dresiduals::AbstractVector{T},
+        A::AbstractMatrix{T},
+        dA::AbstractMatrix{T},
+        b::AbstractVector{T},
+        db::AbstractVector{T},
+    ) -> AbstractVector{T}
+
+Compute weighted directional derivatives of the Runge--Kutta order conditions
+``\\{ w_t \\nabla_{\\mathrm{d}A, \\mathrm{d}\\mathbf{b}} [
+\\mathbf{b} \\cdot \\Phi_t(A) ] : t \\in T \\}``
+at a given Butcher tableau ``(A, \\mathbf{b})``
+in direction ``(\\mathrm{d}A, \\mathrm{d}\\mathbf{b})``
+over a set of rooted trees ``T`` with associated weights ``w_t``.
+"""
 function (adj::WeightedRKOCAdjoint{T})(
     dresiduals::AbstractVector{T},
     A::AbstractMatrix{T},
@@ -749,6 +834,20 @@ function (adj::RKOCAdjoint{T})(
 end
 
 
+"""
+    (adj::WeightedRKOCAdjoint{T})(
+        dresiduals::AbstractVector{T},
+        A::AbstractMatrix{T},
+        i::Int,
+        j::Int,
+        b::AbstractVector{T},
+    ) -> AbstractVector{T}
+
+Compute weighted partial derivatives of the Runge--Kutta order conditions
+``\\{ w_t \\partial_{A_{i,j}} [ \\mathbf{b} \\cdot \\Phi_t(A) ] : t \\in T \\}``
+with respect to ``A_{i,j}`` at a given Butcher tableau ``(A, \\mathbf{b})``
+over a set of rooted trees ``T`` with associated weights ``w_t``.
+"""
 function (adj::WeightedRKOCAdjoint{T})(
     dresiduals::AbstractVector{T},
     A::AbstractMatrix{T},
@@ -815,6 +914,19 @@ function (adj::RKOCAdjoint{T})(
 end
 
 
+"""
+    (adj::WeightedRKOCAdjoint{T})(
+        dresiduals::AbstractVector{T},
+        A::AbstractMatrix{T},
+        i::Int,
+    ) -> AbstractVector{T}
+
+Compute weighted partial derivatives of the Runge--Kutta order conditions
+``\\{ w_t \\partial_{b_i} [ \\mathbf{b} \\cdot \\Phi_t(A) ] : t \\in T \\}``
+with respect to ``b_i`` at a given Butcher tableau ``A``
+over a set of rooted trees ``T`` with associated weights ``w_t``.
+(The result is independent of the value of ``\\mathbf{b}``.)
+"""
 function (adj::WeightedRKOCAdjoint{T})(
     dresiduals::AbstractVector{T},
     A::AbstractMatrix{T},
@@ -1117,6 +1229,20 @@ function (adj::RKOCAdjoint{T})(
 end
 
 
+"""
+    (adj::WeightedRKOCAdjoint{T})(
+        dA::AbstractMatrix{T},
+        db::AbstractVector{T},
+        A::AbstractMatrix{T},
+        b::AbstractVector{T},
+    ) -> Tuple{AbstractMatrix{T}, AbstractVector{T}}
+
+Compute the gradient of the weighted sum of squared residuals
+of the Runge--Kutta order conditions ``\\nabla_{A, \\mathbf{b}}
+\\sum_{t \\in T} w_t^2 (\\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t))^2``
+at a given Butcher tableau ``(A, \\mathbf{b})``
+over a set of rooted trees ``T`` with associated weights ``w_t``.
+"""
 function (adj::WeightedRKOCAdjoint{T})(
     dA::AbstractMatrix{T},
     db::AbstractVector{T},
