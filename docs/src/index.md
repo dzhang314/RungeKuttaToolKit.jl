@@ -1,4 +1,4 @@
-# RungeKuttaToolKit.jl Documentation
+# RungeKuttaToolKit.jl
 
 ```@docs
 RKOCEvaluator
