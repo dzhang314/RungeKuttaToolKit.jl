@@ -1271,6 +1271,91 @@ end
 ################################################### RESHAPING COEFFICIENT ARRAYS
 
 
+abstract type AbstractRKParameterization{T} end
+
+
+struct ExplicitRKParameterization{T,
+    MT<:AbstractMatrix{T},VT<:AbstractVector{T}
+} <: AbstractRKParameterization{T}
+    num_variables::Int
+    num_stages::Int
+    A::MT
+    b::VT
+    dA::MT
+    db::VT
+    function ExplicitRKParameterization{T}(
+        stage_axis::AbstractUnitRange
+    ) where {T}
+        s = length(stage_axis)
+        A = zeros(T, stage_axis, stage_axis)
+        b = zeros(T, stage_axis)
+        dA = zeros(T, stage_axis, stage_axis)
+        db = zeros(T, stage_axis)
+        return new{T,typeof(A),typeof(b)}((s * (s + 1)) >> 1, s, A, b, dA, db)
+    end
+end
+
+
+@inline ExplicitRKParameterization{T}(s::Integer) where {T} =
+    ExplicitRKParameterization{T}(Base.OneTo(s))
+
+
+function (p::ExplicitRKParameterization{T})(x::AbstractVector{T}) where {T}
+
+    # Validate array dimensions.
+    @assert length(x) == p.num_variables
+
+    # Iterate over the strict lower-triangular part of A.
+    offset = 0
+    for i = 1:s
+        @simd ivdep for j = 1:i-1
+            @inbounds A[i, j] = x[offset+j]
+        end
+        offset += i - 1
+        @simd ivdep for j = i:s
+            @inbounds A[i, j] = _zero
+        end
+    end
+
+    # Iterate over b.
+    @simd ivdep for i = 1:s
+        @inbounds b[i] = x[offset+i]
+    end
+    return (A, b)
+
+    return p
+end
+
+
+# struct DiagonallyImplicitRKParameterization{T} <: AbstractRKParameterization{T}
+#     num_variables::Int
+#     num_stages::Int
+#     A::Matrix{T}
+#     b::Vector{T}
+# end
+
+
+# struct ImplicitRKParameterization{T} <: AbstractRKParameterization{T}
+#     num_variables::Int
+#     num_stages::Int
+#     A::Matrix{T}
+#     b::Vector{T}
+# end
+
+
+# struct ParallelExplicitRKParameterization{T} <: AbstractRKParameterization{T}
+#     num_variables::Int
+#     num_stages::Int
+#     num_parallel_stages::Int
+#     parallel_width::Int
+#     A::Matrix{T}
+#     b::Vector{T}
+# end
+
+
+################################################### RESHAPING COEFFICIENT ARRAYS
+
+
 function reshape_explicit!(
     A::AbstractMatrix{T},
     x::AbstractVector{T},
@@ -1329,33 +1414,6 @@ function reshape_explicit!(
     b::AbstractVector{T},
     x::AbstractVector{T},
 ) where {T}
-
-    # Validate array dimensions.
-    s = length(b)
-    @assert (s, s) == size(A)
-    @assert ((s * (s + 1)) >> 1,) == size(x)
-    Base.require_one_based_indexing(A, b, x)
-
-    # Construct numeric constants.
-    _zero = zero(T)
-
-    # Iterate over the strict lower-triangular part of A.
-    offset = 0
-    for i = 1:s
-        @simd ivdep for j = 1:i-1
-            @inbounds A[i, j] = x[offset+j]
-        end
-        offset += i - 1
-        @simd ivdep for j = i:s
-            @inbounds A[i, j] = _zero
-        end
-    end
-
-    # Iterate over b.
-    @simd ivdep for i = 1:s
-        @inbounds b[i] = x[offset+i]
-    end
-    return (A, b)
 end
 
 
