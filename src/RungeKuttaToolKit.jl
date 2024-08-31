@@ -9,12 +9,13 @@ const NULL_INDEX = typemin(Int)
 abstract type AbstractRKOCEvaluator{T} end
 abstract type AbstractRKOCAdjoint{T} end
 abstract type AbstractRKCost{T} end
+abstract type AbstractRKParameterization{T} end
 function get_axes end
 function compute_residual end
 
 
 include("ButcherInstructions.jl")
-include("CostFunctions.jl")
+include("RKCost.jl")
 
 
 using .ButcherInstructions: LevelSequence,

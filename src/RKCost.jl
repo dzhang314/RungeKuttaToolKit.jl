@@ -1,4 +1,4 @@
-module CostFunctions
+module RKCost
 
 
 using ..RungeKuttaToolKit: PERFORM_INTERNAL_BOUNDS_CHECKS, NULL_INDEX,
@@ -9,13 +9,13 @@ using ..RungeKuttaToolKit: PERFORM_INTERNAL_BOUNDS_CHECKS, NULL_INDEX,
 ############################################################################# L1
 
 
-export L1RKCost
+export RKCostL1
 
 
-struct L1RKCost{T} <: AbstractRKCost{T} end
+struct RKCostL1{T} <: AbstractRKCost{T} end
 
 
-function (::L1RKCost{T})(
+function (::RKCostL1{T})(
     ev::AbstractRKOCEvaluator{T},
     b::AbstractVector{T},
 ) where {T}
@@ -39,15 +39,15 @@ end
 #################################################################### WEIGHTED L1
 
 
-export WeightedL1RKCost
+export RKCostWeightedL1
 
 
-struct WeightedL1RKCost{T} <: AbstractRKCost{T}
+struct RKCostWeightedL1{T} <: AbstractRKCost{T}
     weights::Vector{T}
 end
 
 
-function (obj::WeightedL1RKCost{T})(
+function (obj::RKCostWeightedL1{T})(
     ev::AbstractRKOCEvaluator{T},
     b::AbstractVector{T},
 ) where {T}
@@ -72,13 +72,13 @@ end
 ############################################################################# L2
 
 
-export L2RKCost
+export RKCostL2
 
 
-struct L2RKCost{T} <: AbstractRKCost{T} end
+struct RKCostL2{T} <: AbstractRKCost{T} end
 
 
-function (::L2RKCost{T})(
+function (::RKCostL2{T})(
     ev::AbstractRKOCEvaluator{T},
     b::AbstractVector{T},
 ) where {T}
@@ -99,7 +99,7 @@ function (::L2RKCost{T})(
 end
 
 
-function (::L2RKCost{T})(
+function (::RKCostL2{T})(
     adj::AbstractRKOCAdjoint{T},
     b::AbstractVector{T},
 ) where {T}
@@ -132,7 +132,7 @@ function (::L2RKCost{T})(
 end
 
 
-function (::L2RKCost{T})(
+function (::RKCostL2{T})(
     db::AbstractVector{T},
     adj::AbstractRKOCAdjoint{T},
     b::AbstractVector{T},
@@ -169,15 +169,15 @@ end
 #################################################################### WEIGHTED L2
 
 
-export WeightedL2RKCost
+export RKCostWeightedL2
 
 
-struct WeightedL2RKCost{T} <: AbstractRKCost{T}
+struct RKCostWeightedL2{T} <: AbstractRKCost{T}
     weights::Vector{T}
 end
 
 
-function (obj::WeightedL2RKCost{T})(
+function (obj::RKCostWeightedL2{T})(
     ev::AbstractRKOCEvaluator{T},
     b::AbstractVector{T},
 ) where {T}
@@ -199,7 +199,7 @@ function (obj::WeightedL2RKCost{T})(
 end
 
 
-function (obj::WeightedL2RKCost{T})(
+function (obj::RKCostWeightedL2{T})(
     adj::AbstractRKOCAdjoint{T},
     b::AbstractVector{T},
 ) where {T}
@@ -233,7 +233,7 @@ function (obj::WeightedL2RKCost{T})(
 end
 
 
-function (obj::WeightedL2RKCost{T})(
+function (obj::RKCostWeightedL2{T})(
     db::AbstractVector{T},
     adj::AbstractRKOCAdjoint{T},
     b::AbstractVector{T},
@@ -271,13 +271,13 @@ end
 ##################################################################### L-INFINITY
 
 
-export LInfinityRKCost
+export RKCostLInfinity
 
 
-struct LInfinityRKCost{T} <: AbstractRKCost{T} end
+struct RKCostLInfinity{T} <: AbstractRKCost{T} end
 
 
-function (::LInfinityRKCost{T})(
+function (::RKCostLInfinity{T})(
     ev::AbstractRKOCEvaluator{T},
     b::AbstractVector{T},
 ) where {T}
@@ -301,15 +301,15 @@ end
 ############################################################ WEIGHTED L-INFINITY
 
 
-export WeightedLInfinityRKCost
+export RKCostWeightedLInfinity
 
 
-struct WeightedLInfinityRKCost{T} <: AbstractRKCost{T}
+struct RKCostWeightedLInfinity{T} <: AbstractRKCost{T}
     weights::Vector{T}
 end
 
 
-function (obj::WeightedLInfinityRKCost{T})(
+function (obj::RKCostWeightedLInfinity{T})(
     ev::AbstractRKOCEvaluator{T},
     b::AbstractVector{T},
 ) where {T}
@@ -334,10 +334,10 @@ end
 ########################################################################## HUBER
 
 
-export HuberRKCost
+export RKCostHuber
 
 
-struct HuberRKCost{T} <: AbstractRKCost{T}
+struct RKCostHuber{T} <: AbstractRKCost{T}
     delta::T
 end
 
@@ -349,7 +349,7 @@ function huber_loss(delta::T, x::T) where {T}
 end
 
 
-function (obj::HuberRKCost{T})(
+function (obj::RKCostHuber{T})(
     ev::AbstractRKOCEvaluator{T},
     b::AbstractVector{T}
 ) where {T}
@@ -373,16 +373,16 @@ end
 ################################################################# WEIGHTED HUBER
 
 
-export WeightedHuberRKCost
+export RKCostWeightedHuber
 
 
-struct WeightedHuberRKCost{T} <: AbstractRKCost{T}
+struct RKCostWeightedHuber{T} <: AbstractRKCost{T}
     delta::T
     weights::Vector{T}
 end
 
 
-function (obj::WeightedHuberRKCost{T})(
+function (obj::RKCostWeightedHuber{T})(
     ev::AbstractRKOCEvaluator{T},
     b::AbstractVector{T}
 ) where {T}
@@ -405,4 +405,4 @@ function (obj::WeightedHuberRKCost{T})(
 end
 
 
-end # module CostFunctions
+end # module RKCost

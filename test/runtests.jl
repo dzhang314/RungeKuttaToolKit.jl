@@ -204,7 +204,7 @@ function test_residuals(::Type{T}, method::Function, order::Int) where {T}
 end
 
 
-using RungeKuttaToolKit.CostFunctions
+using RungeKuttaToolKit.RKCost
 
 
 function test_cost_functions(::Type{T}, method::Function, order::Int) where {T}
@@ -215,10 +215,10 @@ function test_cost_functions(::Type{T}, method::Function, order::Int) where {T}
     @assert size(b) == (num_stages,)
     ev = RKOCEvaluator{T}(order, num_stages)
 
-    l1_cost = L1RKCost{T}()
-    l2_cost = L2RKCost{T}()
-    linf_cost = LInfinityRKCost{T}()
-    huber_cost = HuberRKCost{T}(one(T))
+    l1_cost = RKCostL1{T}()
+    l2_cost = RKCostL2{T}()
+    linf_cost = RKCostLInfinity{T}()
+    huber_cost = RKCostHuber{T}(one(T))
 
     if isbitstype(T)
         @test iszero(@allocated ev(l1_cost, A, b))
@@ -240,10 +240,10 @@ function test_cost_functions(::Type{T}, method::Function, order::Int) where {T}
     for _ = 1:NUM_RANDOM_TRIALS
 
         weights = rand(T, length(ev.inv_gamma))
-        weighted_l1_cost = WeightedL1RKCost{T}(weights)
-        weighted_l2_cost = WeightedL2RKCost{T}(weights)
-        weighted_linf_cost = WeightedLInfinityRKCost{T}(weights)
-        weighted_huber_cost = WeightedHuberRKCost{T}(one(T), weights)
+        weighted_l1_cost = RKCostWeightedL1{T}(weights)
+        weighted_l2_cost = RKCostWeightedL2{T}(weights)
+        weighted_linf_cost = RKCostWeightedLInfinity{T}(weights)
+        weighted_huber_cost = RKCostWeightedHuber{T}(one(T), weights)
 
         if isbitstype(T)
             @test iszero(@allocated ev(weighted_l1_cost, A, b))
@@ -430,16 +430,16 @@ function test_gradient(::Type{T}) where {T}
         dA = zeros(T, num_stages, num_stages)
         db = zeros(T, num_stages)
 
-        l1_cost = L1RKCost{T}()
-        l2_cost = L2RKCost{T}()
-        linf_cost = LInfinityRKCost{T}()
-        huber_cost = HuberRKCost{T}(one(T))
+        l1_cost = RKCostL1{T}()
+        l2_cost = RKCostL2{T}()
+        linf_cost = RKCostLInfinity{T}()
+        huber_cost = RKCostHuber{T}(one(T))
 
         weights = rand(T, length(ev.inv_gamma))
-        weighted_l1_cost = WeightedL1RKCost{T}(weights)
-        weighted_l2_cost = WeightedL2RKCost{T}(weights)
-        weighted_linf_cost = WeightedLInfinityRKCost{T}(weights)
-        weighted_huber_cost = WeightedHuberRKCost{T}(one(T), weights)
+        weighted_l1_cost = RKCostWeightedL1{T}(weights)
+        weighted_l2_cost = RKCostWeightedL2{T}(weights)
+        weighted_linf_cost = RKCostWeightedLInfinity{T}(weights)
+        weighted_huber_cost = RKCostWeightedHuber{T}(one(T), weights)
 
         for obj in [l2_cost, weighted_l2_cost]
 
