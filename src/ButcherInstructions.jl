@@ -263,7 +263,7 @@ all_rooted_trees(n::Int; tree_ordering::Symbol=:reverse_lexicographic) =
 
 
 function butcher_density(tree::LevelSequence)
-    result = length(tree)
+    result = BigInt(length(tree))
     for leg in extract_legs(tree)
         result *= butcher_density(leg)
     end
@@ -281,9 +281,10 @@ function butcher_symmetry(tree::LevelSequence)
             leg_counts[leg] = 1
         end
     end
-    result = 1
+    result = BigInt(1)
     for (data, count) in leg_counts.entries
-        result *= butcher_symmetry(LevelSequence(data)) * factorial(count)
+        leg_symmetry = butcher_symmetry(LevelSequence(data))
+        result *= leg_symmetry * factorial(BigInt(count))
     end
     return result
 end
