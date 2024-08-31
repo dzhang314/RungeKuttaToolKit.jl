@@ -1,6 +1,9 @@
 module ButcherInstructions
 
 
+using ..RungeKuttaToolKit: NULL_INDEX
+
+
 ################################################################### BIPARTITIONS
 
 
@@ -291,9 +294,6 @@ end
 
 
 ########################################################### BUTCHER INSTRUCTIONS
-
-
-const NULL_INDEX = typemin(Int)
 
 
 struct ButcherInstruction

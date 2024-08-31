@@ -7,6 +7,7 @@ using Test
 const MAX_ORDER = 10
 const MAX_NUM_STAGES = 20
 const NUM_RANDOM_TRIALS = 10
+const GRADIENT_TOLERANCE_BITS = 10
 const NUMERIC_TYPES = [
     Float16, Float32, Float64, BigFloat,
     Float64x1, Float64x2, Float64x3, Float64x4,
@@ -20,8 +21,14 @@ const ALL_TREES = all_rooted_trees(MAX_ORDER)
 
 
 function relative_difference(x::T, y::T) where {T}
-    if iszero(x) & iszero(y)
+    x_zero = iszero(x)
+    y_zero = iszero(y)
+    if x_zero & y_zero
         return zero(T)
+    elseif x_zero
+        return abs(y)
+    elseif y_zero
+        return abs(x)
     else
         half_diff = abs(x - y) / (abs(x) + abs(y))
         return half_diff + half_diff
@@ -197,6 +204,9 @@ function test_residuals(::Type{T}, method::Function, order::Int) where {T}
 end
 
 
+using RungeKuttaToolKit.CostFunctions
+
+
 function test_cost_functions(::Type{T}, method::Function, order::Int) where {T}
 
     A, b = method(T)
@@ -205,10 +215,10 @@ function test_cost_functions(::Type{T}, method::Function, order::Int) where {T}
     @assert size(b) == (num_stages,)
     ev = RKOCEvaluator{T}(order, num_stages)
 
-    l1_cost = L1RKObjective{T}()
-    l2_cost = L2RKObjective{T}()
-    linf_cost = LInfinityRKObjective{T}()
-    huber_cost = HuberRKObjective{T}(one(T))
+    l1_cost = L1RKCost{T}()
+    l2_cost = L2RKCost{T}()
+    linf_cost = LInfinityRKCost{T}()
+    huber_cost = HuberRKCost{T}(one(T))
 
     if isbitstype(T)
         @test iszero(@allocated ev(l1_cost, A, b))
@@ -230,10 +240,10 @@ function test_cost_functions(::Type{T}, method::Function, order::Int) where {T}
     for _ = 1:NUM_RANDOM_TRIALS
 
         weights = rand(T, length(ev.inv_gamma))
-        weighted_l1_cost = WeightedL1RKObjective{T}(weights)
-        weighted_l2_cost = WeightedL2RKObjective{T}(weights)
-        weighted_linf_cost = WeightedLInfinityRKObjective{T}(weights)
-        weighted_huber_cost = WeightedHuberRKObjective{T}(one(T), weights)
+        weighted_l1_cost = WeightedL1RKCost{T}(weights)
+        weighted_l2_cost = WeightedL2RKCost{T}(weights)
+        weighted_linf_cost = WeightedLInfinityRKCost{T}(weights)
+        weighted_huber_cost = WeightedHuberRKCost{T}(one(T), weights)
 
         if isbitstype(T)
             @test iszero(@allocated ev(weighted_l1_cost, A, b))
@@ -403,7 +413,7 @@ function test_gradient(::Type{T}) where {T}
     _eps = eps(T)
     _sqrt_eps = sqrt(_eps)
     tolerance = _sqrt_eps
-    for _ = 1:8
+    for _ = 1:GRADIENT_TOLERANCE_BITS
         tolerance += tolerance
     end
     h = _sqrt_eps
@@ -420,16 +430,16 @@ function test_gradient(::Type{T}) where {T}
         dA = zeros(T, num_stages, num_stages)
         db = zeros(T, num_stages)
 
-        l1_cost = L1RKObjective{T}()
-        l2_cost = L2RKObjective{T}()
-        linf_cost = LInfinityRKObjective{T}()
-        huber_cost = HuberRKObjective{T}(one(T))
+        l1_cost = L1RKCost{T}()
+        l2_cost = L2RKCost{T}()
+        linf_cost = LInfinityRKCost{T}()
+        huber_cost = HuberRKCost{T}(one(T))
 
         weights = rand(T, length(ev.inv_gamma))
-        weighted_l1_cost = WeightedL1RKObjective{T}(weights)
-        weighted_l2_cost = WeightedL2RKObjective{T}(weights)
-        weighted_linf_cost = WeightedLInfinityRKObjective{T}(weights)
-        weighted_huber_cost = WeightedHuberRKObjective{T}(one(T), weights)
+        weighted_l1_cost = WeightedL1RKCost{T}(weights)
+        weighted_l2_cost = WeightedL2RKCost{T}(weights)
+        weighted_linf_cost = WeightedLInfinityRKCost{T}(weights)
+        weighted_huber_cost = WeightedHuberRKCost{T}(one(T), weights)
 
         for obj in [l2_cost, weighted_l2_cost]
 

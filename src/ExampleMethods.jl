@@ -1,6 +1,9 @@
 module ExampleMethods
 
 
+############################################################################ RK4
+
+
 function RK4(::Type{T}) where {T}
     _zero = zero(T)
     _one = one(T)
@@ -20,6 +23,9 @@ function RK4(::Type{T}) where {T}
     b = [_sixth, _third, _third, _sixth]
     return (A, b)
 end
+
+
+############################################################################ GL6
 
 
 function GL6(::Type{T}) where {T}
@@ -62,19 +68,6 @@ end
 
 end # module ExampleMethods
 
-
-# export rk4_table, extrapolated_euler_table,
-#     rkck5_table, dopri5_table, rkf8_table
-
-# # This is the classical Runge-Kutta method, for which no introduction should
-# # be needed. (If you don't know what this is, you probably need to do some more
-# # background reading before using this package!)
-# rk4_table(::Type{T}) where {T<:Real} = T[
-#     inv(T(2)),
-#     T(0), inv(T(2)),
-#     T(0), T(0), T(1),
-#     inv(T(6)), inv(T(3)), inv(T(3)), inv(T(6))
-# ]
 
 # # This is the Runge-Kutta method obtained by applying Richardson extrapolation
 # # to n independent executions of Euler's method using step sizes h, h/2, h/3,

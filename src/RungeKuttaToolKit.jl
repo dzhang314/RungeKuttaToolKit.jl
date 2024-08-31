@@ -1,19 +1,27 @@
 module RungeKuttaToolKit
 
 
-using MultiFloats: MultiFloat, rsqrt
+include("ExampleMethods.jl")
+
+
+const PERFORM_INTERNAL_BOUNDS_CHECKS = true
+const NULL_INDEX = typemin(Int)
+abstract type AbstractRKOCEvaluator{T} end
+abstract type AbstractRKOCAdjoint{T} end
+abstract type AbstractRKCost{T} end
+function get_axes end
+function compute_residual end
 
 
 include("ButcherInstructions.jl")
-include("ExampleMethods.jl")
+include("CostFunctions.jl")
+
+
 using .ButcherInstructions: LevelSequence,
     NULL_INDEX, ButcherInstruction, ButcherInstructionTable,
     rooted_trees, all_rooted_trees, butcher_density, butcher_symmetry
 export LevelSequence, ButcherInstruction, ButcherInstructionTable,
     rooted_trees, all_rooted_trees, butcher_density, butcher_symmetry
-
-
-const PERFORM_INTERNAL_BOUNDS_CHECKS = true
 
 
 ####################################################### EVALUATOR DATA STRUCTURE
@@ -22,7 +30,7 @@ const PERFORM_INTERNAL_BOUNDS_CHECKS = true
 export RKOCEvaluator, RKOCEvaluatorQR
 
 
-struct RKOCEvaluator{T}
+struct RKOCEvaluator{T} <: AbstractRKOCEvaluator{T}
     table::ButcherInstructionTable
     Phi::Matrix{T}
     dPhi::Matrix{T}
@@ -30,7 +38,7 @@ struct RKOCEvaluator{T}
 end
 
 
-struct RKOCEvaluatorQR{T}
+struct RKOCEvaluatorQR{T} <: AbstractRKOCEvaluator{T}
     table::ButcherInstructionTable
     Phi::Matrix{T}
     dPhi::Matrix{T}
@@ -96,7 +104,7 @@ efficiency of generating all rooted trees.
         optimize=false, sort_by_depth=false)
 
 
-struct RKOCAdjoint{T}
+struct RKOCAdjoint{T} <: AbstractRKOCAdjoint{T}
     ev::RKOCEvaluator{T}
 end
 
@@ -275,370 +283,6 @@ end
 ) where {T} = ev(similar(Vector{T}, get_axes(ev)[3]), A, b)
 
 
-################################################################################
-
-
-export AbstractRKObjective,
-    L1RKObjective, WeightedL1RKObjective,
-    L2RKObjective, WeightedL2RKObjective,
-    LInfinityRKObjective, WeightedLInfinityRKObjective,
-    HuberRKObjective, WeightedHuberRKObjective
-
-
-abstract type AbstractRKObjective{T} end
-
-
-struct L1RKObjective{T} <: AbstractRKObjective{T} end
-
-
-function (::L1RKObjective{T})(
-    ev::RKOCEvaluator{T},
-    b::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    stage_axis, _, output_axis = get_axes(ev)
-    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(b) == (stage_axis,)
-    end
-
-    # Compute L1 norm of residuals.
-    result = zero(T)
-    @inbounds for i in output_axis
-        result += abs(compute_residual(ev, b, i))
-    end
-
-    return result
-end
-
-
-struct WeightedL1RKObjective{T} <: AbstractRKObjective{T}
-    weights::Vector{T}
-end
-
-
-function (obj::WeightedL1RKObjective{T})(
-    ev::RKOCEvaluator{T},
-    b::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    stage_axis, _, output_axis = get_axes(ev)
-    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(obj.weights) == (output_axis,)
-        @assert axes(b) == (stage_axis,)
-    end
-
-    # Compute weighted L1 norm of residuals.
-    result = zero(T)
-    @inbounds for i in output_axis
-        result += obj.weights[i] * abs(compute_residual(ev, b, i))
-    end
-
-    return result
-end
-
-
-struct L2RKObjective{T} <: AbstractRKObjective{T} end
-
-
-function (::L2RKObjective{T})(
-    ev::RKOCEvaluator{T},
-    b::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    stage_axis, _, output_axis = get_axes(ev)
-    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(b) == (stage_axis,)
-    end
-
-    # Compute L2 norm of residuals.
-    result = zero(T)
-    @inbounds for i in output_axis
-        result += abs2(compute_residual(ev, b, i))
-    end
-
-    return result
-end
-
-
-function (::L2RKObjective{T})(
-    adj::RKOCAdjoint{T},
-    b::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    stage_axis, _, _ = get_axes(adj.ev)
-    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(b) == (stage_axis,)
-    end
-
-    # Construct numeric constants.
-    _zero = zero(T)
-
-    # Initialize dPhi using derivative of L2 norm.
-    @inbounds for (k, i) in Iterators.reverse(pairs(adj.ev.table.source_indices))
-        if i == NULL_INDEX
-            @simd ivdep for j in stage_axis
-                adj.ev.dPhi[j, k] = _zero
-            end
-        else
-            residual = compute_residual(adj.ev, b, i)
-            derivative = residual + residual
-            @simd ivdep for j in stage_axis
-                adj.ev.dPhi[j, k] = derivative * b[j]
-            end
-        end
-    end
-
-    return adj
-end
-
-
-function (::L2RKObjective{T})(
-    db::AbstractVector{T},
-    adj::RKOCAdjoint{T},
-    b::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    stage_axis, _, _ = get_axes(adj.ev)
-    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(db) == (stage_axis,)
-        @assert axes(b) == (stage_axis,)
-    end
-
-    # Construct numeric constants.
-    _zero = zero(T)
-
-    # Initialize db to zero.
-    @simd ivdep for i in stage_axis
-        @inbounds db[i] = _zero
-    end
-
-    # Compute db using derivative of L2 norm.
-    @inbounds for (i, k) in pairs(adj.ev.table.selected_indices)
-        residual = compute_residual(adj.ev, b, i)
-        derivative = residual + residual
-        @simd ivdep for j in stage_axis
-            db[j] += derivative * adj.ev.Phi[j, k]
-        end
-    end
-
-    return db
-end
-
-
-struct WeightedL2RKObjective{T} <: AbstractRKObjective{T}
-    weights::Vector{T}
-end
-
-
-function (obj::WeightedL2RKObjective{T})(
-    ev::RKOCEvaluator{T},
-    b::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    stage_axis, _, output_axis = get_axes(ev)
-    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(obj.weights) == (output_axis,)
-        @assert axes(b) == (stage_axis,)
-    end
-
-    # Compute weighted L2 norm of residuals.
-    result = zero(T)
-    @inbounds for i in output_axis
-        result += obj.weights[i] * abs2(compute_residual(ev, b, i))
-    end
-
-    return result
-end
-
-
-function (obj::WeightedL2RKObjective{T})(
-    adj::RKOCAdjoint{T},
-    b::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    stage_axis, _, output_axis = get_axes(adj.ev)
-    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(obj.weights) == (output_axis,)
-        @assert axes(b) == (stage_axis,)
-    end
-
-    # Construct numeric constants.
-    _zero = zero(T)
-
-    # Initialize dPhi using derivative of weighted L2 norm.
-    @inbounds for (k, i) in Iterators.reverse(pairs(adj.ev.table.source_indices))
-        if i == NULL_INDEX
-            @simd ivdep for j in stage_axis
-                adj.ev.dPhi[j, k] = _zero
-            end
-        else
-            residual = compute_residual(adj.ev, b, i)
-            derivative = obj.weights[i] * (residual + residual)
-            @simd ivdep for j in stage_axis
-                adj.ev.dPhi[j, k] = derivative * b[j]
-            end
-        end
-    end
-
-    return adj
-end
-
-
-function (obj::WeightedL2RKObjective{T})(
-    db::AbstractVector{T},
-    adj::RKOCAdjoint{T},
-    b::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    stage_axis, _, output_axis = get_axes(adj.ev)
-    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(obj.weights) == (output_axis,)
-        @assert axes(db) == (stage_axis,)
-        @assert axes(b) == (stage_axis,)
-    end
-
-    # Construct numeric constants.
-    _zero = zero(T)
-
-    # Initialize db to zero.
-    @simd ivdep for i in stage_axis
-        @inbounds db[i] = _zero
-    end
-
-    # Compute db using derivative of weighted L2 norm.
-    @inbounds for (i, k) in pairs(adj.ev.table.selected_indices)
-        residual = compute_residual(adj.ev, b, i)
-        derivative = obj.weights[i] * (residual + residual)
-        @simd ivdep for j in stage_axis
-            db[j] += derivative * adj.ev.Phi[j, k]
-        end
-    end
-
-    return db
-end
-
-
-struct LInfinityRKObjective{T} <: AbstractRKObjective{T} end
-
-
-function (::LInfinityRKObjective{T})(
-    ev::RKOCEvaluator{T},
-    b::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    stage_axis, _, output_axis = get_axes(ev)
-    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(b) == (stage_axis,)
-    end
-
-    # Compute LInfinity norm of residuals.
-    result = zero(T)
-    @inbounds for i in output_axis
-        result = max(result, abs(compute_residual(ev, b, i)))
-    end
-
-    return result
-end
-
-
-struct WeightedLInfinityRKObjective{T} <: AbstractRKObjective{T}
-    weights::Vector{T}
-end
-
-
-function (obj::WeightedLInfinityRKObjective{T})(
-    ev::RKOCEvaluator{T},
-    b::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    stage_axis, _, output_axis = get_axes(ev)
-    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(obj.weights) == (output_axis,)
-        @assert axes(b) == (stage_axis,)
-    end
-
-    # Compute weighted LInfinity norm of residuals.
-    result = zero(T)
-    @inbounds for i in output_axis
-        result = max(result, obj.weights[i] * abs(compute_residual(ev, b, i)))
-    end
-
-    return result
-end
-
-
-function huber_loss(delta::T, x::T) where {T}
-    abs_x = abs(x)
-    return ((abs_x <= delta) ? (abs_x * abs_x) :
-            (delta * ((abs_x + abs_x) - delta)))
-end
-
-
-struct HuberRKObjective{T} <: AbstractRKObjective{T}
-    delta::T
-end
-
-
-function (obj::HuberRKObjective{T})(
-    ev::RKOCEvaluator{T},
-    b::AbstractVector{T}
-) where {T}
-
-    # Validate array dimensions.
-    stage_axis, _, output_axis = get_axes(ev)
-    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(b) == (stage_axis,)
-    end
-
-    # Compute sum of Huber losses of residuals.
-    result = zero(T)
-    @inbounds for i in output_axis
-        result += huber_loss(obj.delta, compute_residual(ev, b, i))
-    end
-
-    return result
-end
-
-
-struct WeightedHuberRKObjective{T} <: AbstractRKObjective{T}
-    delta::T
-    weights::Vector{T}
-end
-
-
-function (obj::WeightedHuberRKObjective{T})(
-    ev::RKOCEvaluator{T},
-    b::AbstractVector{T}
-) where {T}
-
-    # Validate array dimensions.
-    stage_axis, _, output_axis = get_axes(ev)
-    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(obj.weights) == (output_axis,)
-        @assert axes(b) == (stage_axis,)
-    end
-
-    # Compute weighted sum of Huber losses of residuals.
-    result = zero(T)
-    @inbounds for i in output_axis
-        result += obj.weights[i] * huber_loss(obj.delta,
-            compute_residual(ev, b, i))
-    end
-
-    return result
-end
-
-
 # """
 #     (ev::RKOCEvaluator{T})(
 #         A::AbstractMatrix{T},
@@ -659,8 +303,8 @@ end
 
 # Here, ``s`` denotes the number of stages specified when constructing `ev`.
 # """
-function (ev::RKOCEvaluator{T})(
-    obj::AbstractRKObjective{T},
+function (ev::AbstractRKOCEvaluator{T})(
+    obj::AbstractRKCost{T},
     A::AbstractMatrix{T},
     b::AbstractVector{T},
 ) where {T}
@@ -1117,7 +761,7 @@ end
 function (adj::RKOCAdjoint{T})(
     dA::AbstractMatrix{T},
     db::AbstractVector{T},
-    obj::AbstractRKObjective{T},
+    obj::AbstractRKCost{T},
     A::AbstractMatrix{T},
     b::AbstractVector{T},
 ) where {T}
@@ -1133,11 +777,12 @@ end
 ########################################################### LEAST-SQUARES SOLVER
 
 
-@inline inv_sqrt(x::Float16) = rsqrt(x)
-@inline inv_sqrt(x::Float32) = rsqrt(x)
-@inline inv_sqrt(x::Float64) = rsqrt(x)
-@inline inv_sqrt(x::MultiFloat{T,N}) where {T,N} = rsqrt(x)
-@inline inv_sqrt(x::T) where {T} = inv(sqrt(x))
+# using MultiFloats: MultiFloat, rsqrt
+# @inline inv_sqrt(x::Float16) = rsqrt(x)
+# @inline inv_sqrt(x::Float32) = rsqrt(x)
+# @inline inv_sqrt(x::Float64) = rsqrt(x)
+# @inline inv_sqrt(x::MultiFloat{T,N}) where {T,N} = rsqrt(x)
+# @inline inv_sqrt(x::T) where {T} = inv(sqrt(x))
 
 
 ################################################### RESHAPING COEFFICIENT ARRAYS
