@@ -4,17 +4,20 @@ module RungeKuttaToolKit
 include("ExampleMethods.jl")
 
 
-const PERFORM_INTERNAL_BOUNDS_CHECKS = true
 const NULL_INDEX = typemin(Int)
+include("ButcherInstructions.jl")
+
+
+const PERFORM_INTERNAL_BOUNDS_CHECKS = true
+abstract type AbstractRKParameterization{T} end
+include("RKParameterization.jl")
+
+
 abstract type AbstractRKOCEvaluator{T} end
 abstract type AbstractRKOCAdjoint{T} end
 abstract type AbstractRKCost{T} end
-abstract type AbstractRKParameterization{T} end
 function get_axes end
 function compute_residual end
-
-
-include("ButcherInstructions.jl")
 include("RKCost.jl")
 
 
@@ -669,7 +672,9 @@ function pullback_dPhi!(
 
     # Validate array dimensions.
     stage_axis, internal_axis, _ = get_axes(ev)
-    @assert axes(A) == (stage_axis, stage_axis)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(A) == (stage_axis, stage_axis)
+    end
 
     # Iterate over intermediate trees in reverse order.
     @inbounds for k in Iterators.reverse(internal_axis)
@@ -702,7 +707,9 @@ function pullback_dA!(
 
     # Validate array dimensions.
     stage_axis, _, _ = get_axes(ev)
-    @assert axes(dA) == (stage_axis, stage_axis)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(dA) == (stage_axis, stage_axis)
+    end
 
     # Construct numeric constants.
     _zero = zero(T)
@@ -784,347 +791,6 @@ end
 # @inline inv_sqrt(x::Float64) = rsqrt(x)
 # @inline inv_sqrt(x::MultiFloat{T,N}) where {T,N} = rsqrt(x)
 # @inline inv_sqrt(x::T) where {T} = inv(sqrt(x))
-
-
-################################################### RESHAPING COEFFICIENT ARRAYS
-
-
-function reshape_explicit!(
-    A::AbstractMatrix{T},
-    x::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    s = size(A, 1)
-    @assert s == size(A, 2)
-    @assert ((s * (s - 1)) >> 1,) == size(x)
-    Base.require_one_based_indexing(A, x)
-
-    # Construct numeric constants.
-    _zero = zero(T)
-
-    # Iterate over the strict lower-triangular part of A.
-    offset = 0
-    for i = 1:s
-        @simd ivdep for j = 1:i-1
-            @inbounds A[i, j] = x[offset+j]
-        end
-        offset += i - 1
-        @simd ivdep for j = i:s
-            @inbounds A[i, j] = _zero
-        end
-    end
-
-    return A
-end
-
-
-function reshape_explicit!(
-    x::AbstractVector{T},
-    A::AbstractMatrix{T},
-) where {T}
-
-    # Validate array dimensions.
-    s = size(A, 1)
-    @assert s == size(A, 2)
-    @assert ((s * (s - 1)) >> 1,) == size(x)
-    Base.require_one_based_indexing(x, A)
-
-    # Iterate over the strict lower-triangular part of A.
-    offset = 0
-    for i = 2:s
-        @simd ivdep for j = 1:i-1
-            @inbounds x[offset+j] = A[i, j]
-        end
-        offset += i - 1
-    end
-    return x
-end
-
-
-function reshape_explicit!(
-    A::AbstractMatrix{T},
-    b::AbstractVector{T},
-    x::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    s = length(b)
-    @assert (s, s) == size(A)
-    @assert ((s * (s + 1)) >> 1,) == size(x)
-    Base.require_one_based_indexing(A, b, x)
-
-    # Construct numeric constants.
-    _zero = zero(T)
-
-    # Iterate over the strict lower-triangular part of A.
-    offset = 0
-    for i = 1:s
-        @simd ivdep for j = 1:i-1
-            @inbounds A[i, j] = x[offset+j]
-        end
-        offset += i - 1
-        @simd ivdep for j = i:s
-            @inbounds A[i, j] = _zero
-        end
-    end
-
-    # Iterate over b.
-    @simd ivdep for i = 1:s
-        @inbounds b[i] = x[offset+i]
-    end
-    return (A, b)
-end
-
-
-function reshape_explicit!(
-    x::AbstractVector{T},
-    A::AbstractMatrix{T},
-    b::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    s = length(b)
-    @assert (s, s) == size(A)
-    @assert ((s * (s + 1)) >> 1,) == size(x)
-    Base.require_one_based_indexing(x, A, b)
-
-    # Iterate over the strict lower-triangular part of A.
-    offset = 0
-    for i = 2:s
-        @simd ivdep for j = 1:i-1
-            @inbounds x[offset+j] = A[i, j]
-        end
-        offset += i - 1
-    end
-
-    # Iterate over b.
-    @simd ivdep for i = 1:s
-        @inbounds x[offset+i] = b[i]
-    end
-    return x
-end
-
-
-function reshape_diagonally_implicit!(
-    A::AbstractMatrix{T},
-    x::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    s = size(A, 1)
-    @assert s == size(A, 2)
-    @assert ((s * (s + 1)) >> 1,) == size(x)
-    Base.require_one_based_indexing(A, x)
-
-    # Construct numeric constants.
-    _zero = zero(T)
-
-    # Iterate over the lower-triangular part of A.
-    offset = 0
-    for i = 1:s
-        @simd ivdep for j = 1:i
-            @inbounds A[i, j] = x[offset+j]
-        end
-        offset += i
-        @simd ivdep for j = i+1:s
-            @inbounds A[i, j] = _zero
-        end
-    end
-    return A
-end
-
-
-function reshape_diagonally_implicit!(
-    x::AbstractVector{T},
-    A::AbstractMatrix{T},
-) where {T}
-
-    # Validate array dimensions.
-    s = size(A, 1)
-    @assert s == size(A, 2)
-    @assert ((s * (s + 1)) >> 1,) == size(x)
-    Base.require_one_based_indexing(x, A)
-
-    # Iterate over the lower-triangular part of A.
-    offset = 0
-    for i = 1:s
-        @simd ivdep for j = 1:i
-            @inbounds x[offset+j] = A[i, j]
-        end
-        offset += i
-    end
-    return x
-end
-
-
-function reshape_diagonally_implicit!(
-    A::AbstractMatrix{T},
-    b::AbstractVector{T},
-    x::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    s = length(b)
-    @assert (s, s) == size(A)
-    @assert ((s * (s + 3)) >> 1,) == size(x)
-    Base.require_one_based_indexing(A, b, x)
-
-    # Construct numeric constants.
-    _zero = zero(T)
-
-    # Iterate over the lower-triangular part of A.
-    offset = 0
-    for i = 1:s
-        @simd ivdep for j = 1:i
-            @inbounds A[i, j] = x[offset+j]
-        end
-        offset += i
-        @simd ivdep for j = i+1:s
-            @inbounds A[i, j] = _zero
-        end
-    end
-
-    # Iterate over b.
-    @simd ivdep for i = 1:s
-        @inbounds b[i] = x[offset+i]
-    end
-    return (A, b)
-end
-
-
-function reshape_diagonally_implicit!(
-    x::AbstractVector{T},
-    A::AbstractMatrix{T},
-    b::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    s = length(b)
-    @assert (s, s) == size(A)
-    @assert ((s * (s + 3)) >> 1,) == size(x)
-    Base.require_one_based_indexing(x, A, b)
-
-    # Iterate over the lower-triangular part of A.
-    offset = 0
-    for i = 1:s
-        @simd ivdep for j = 1:i
-            @inbounds x[offset+j] = A[i, j]
-        end
-        offset += i
-    end
-
-    # Iterate over b.
-    @simd ivdep for i = 1:s
-        @inbounds x[offset+i] = b[i]
-    end
-    return x
-end
-
-
-function reshape_implicit!(
-    A::AbstractMatrix{T},
-    x::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    s = size(A, 1)
-    @assert s == size(A, 2)
-    @assert (s * s,) == size(x)
-    Base.require_one_based_indexing(A, x)
-
-    # Iterate over A.
-    offset = 0
-    for i = 1:s
-        @simd ivdep for j = 1:s
-            @inbounds A[i, j] = x[offset+j]
-        end
-        offset += s
-    end
-    return A
-end
-
-
-function reshape_implicit!(
-    x::AbstractVector{T},
-    A::AbstractMatrix{T},
-) where {T}
-
-    # Validate array dimensions.
-    s = size(A, 1)
-    @assert s == size(A, 2)
-    @assert (s * s,) == size(x)
-    Base.require_one_based_indexing(x, A)
-
-    # Iterate over A.
-    offset = 0
-    for i = 1:s
-        @simd ivdep for j = 1:s
-            @inbounds x[offset+j] = A[i, j]
-        end
-        offset += s
-    end
-    return x
-end
-
-
-function reshape_implicit!(
-    A::AbstractMatrix{T},
-    b::AbstractVector{T},
-    x::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    s = size(A, 1)
-    @assert s == size(A, 2)
-    @assert (s * (s + 1),) == size(x)
-    Base.require_one_based_indexing(A, b, x)
-
-    # Iterate over A.
-    offset = 0
-    for i = 1:s
-        @simd ivdep for j = 1:s
-            @inbounds A[i, j] = x[offset+j]
-        end
-        offset += s
-    end
-
-    # Iterate over b.
-    @simd ivdep for i = 1:s
-        @inbounds b[i] = x[offset+i]
-    end
-    return (A, b)
-end
-
-
-function reshape_implicit!(
-    x::AbstractVector{T},
-    A::AbstractMatrix{T},
-    b::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    s = size(A, 1)
-    @assert s == size(A, 2)
-    @assert (s * (s + 1),) == size(x)
-    Base.require_one_based_indexing(x, A, b)
-
-    # Iterate over A.
-    offset = 0
-    for i = 1:s
-        @simd ivdep for j = 1:s
-            @inbounds x[offset+j] = A[i, j]
-        end
-        offset += s
-    end
-
-    # Iterate over b.
-    copy!
-    @simd ivdep for i = 1:s
-        @inbounds x[offset+i] = b[i]
-    end
-    return x
-end
 
 
 end # module RungeKuttaToolKit

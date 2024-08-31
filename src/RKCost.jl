@@ -1,7 +1,7 @@
 module RKCost
 
 
-using ..RungeKuttaToolKit: PERFORM_INTERNAL_BOUNDS_CHECKS, NULL_INDEX,
+using ..RungeKuttaToolKit: NULL_INDEX, PERFORM_INTERNAL_BOUNDS_CHECKS,
     AbstractRKOCEvaluator, AbstractRKOCAdjoint, AbstractRKCost,
     get_axes, compute_residual
 

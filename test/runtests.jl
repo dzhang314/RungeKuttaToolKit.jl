@@ -55,13 +55,12 @@ end
 ############################################################## RESHAPE OPERATORS
 
 
-using RungeKuttaToolKit: reshape_explicit!,
-    reshape_diagonally_implicit!, reshape_implicit!
+using RungeKuttaToolKit.RKParameterization
 
 
 @testset "reshape operators" begin
     let
-        A, b = reshape_explicit!(
+        A, b = RKParameterizationExplicit{BigFloat}(3)(
             Matrix{BigFloat}(undef, 3, 3),
             Vector{BigFloat}(undef, 3),
             BigFloat[1, 2, 3, 4, 5, 6])
@@ -69,26 +68,26 @@ using RungeKuttaToolKit: reshape_explicit!,
         @test b == BigFloat[4, 5, 6]
     end
     let
-        x = reshape_explicit!(
+        x = RKParameterizationExplicit{BigFloat}(3)(
             Vector{BigFloat}(undef, 6),
             BigFloat[0 0 0; 1 0 0; 2 3 0],
             BigFloat[4, 5, 6])
         @test x == BigFloat[1, 2, 3, 4, 5, 6]
     end
     let
-        A = reshape_explicit!(
+        A = RKParameterizationExplicitQR{BigFloat}(3)(
             Matrix{BigFloat}(undef, 3, 3),
             BigFloat[1, 2, 3])
         @test A == BigFloat[0 0 0; 1 0 0; 2 3 0]
     end
     let
-        x = reshape_explicit!(
+        x = RKParameterizationExplicitQR{BigFloat}(3)(
             Vector{BigFloat}(undef, 3),
             BigFloat[0 0 0; 1 0 0; 2 3 0])
         @test x == BigFloat[1, 2, 3]
     end
     let
-        A, b = reshape_diagonally_implicit!(
+        A, b = RKParameterizationDiagonallyImplicit{BigFloat}(3)(
             Matrix{BigFloat}(undef, 3, 3),
             Vector{BigFloat}(undef, 3),
             BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9])
@@ -96,26 +95,26 @@ using RungeKuttaToolKit: reshape_explicit!,
         @test b == BigFloat[7, 8, 9]
     end
     let
-        x = reshape_diagonally_implicit!(
+        x = RKParameterizationDiagonallyImplicit{BigFloat}(3)(
             Vector{BigFloat}(undef, 9),
             BigFloat[1 0 0; 2 3 0; 4 5 6],
             BigFloat[7, 8, 9])
         @test x == BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9]
     end
     let
-        A = reshape_diagonally_implicit!(
+        A = RKParameterizationDiagonallyImplicitQR{BigFloat}(3)(
             Matrix{BigFloat}(undef, 3, 3),
             BigFloat[1, 2, 3, 4, 5, 6])
         @test A == BigFloat[1 0 0; 2 3 0; 4 5 6]
     end
     let
-        x = reshape_diagonally_implicit!(
+        x = RKParameterizationDiagonallyImplicitQR{BigFloat}(3)(
             Vector{BigFloat}(undef, 6),
             BigFloat[1 0 0; 2 3 0; 4 5 6])
         @test x == BigFloat[1, 2, 3, 4, 5, 6]
     end
     let
-        A, b = reshape_implicit!(
+        A, b = RKParameterizationImplicit{BigFloat}(3)(
             Matrix{BigFloat}(undef, 3, 3),
             Vector{BigFloat}(undef, 3),
             BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
@@ -123,20 +122,20 @@ using RungeKuttaToolKit: reshape_explicit!,
         @test b == BigFloat[10, 11, 12]
     end
     let
-        x = reshape_implicit!(
+        x = RKParameterizationImplicit{BigFloat}(3)(
             Vector{BigFloat}(undef, 12),
             BigFloat[1 2 3; 4 5 6; 7 8 9],
             BigFloat[10, 11, 12])
         @test x == BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
     end
     let
-        A = reshape_implicit!(
+        A = RKParameterizationImplicitQR{BigFloat}(3)(
             Matrix{BigFloat}(undef, 3, 3),
             BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9])
         @test A == BigFloat[1 2 3; 4 5 6; 7 8 9]
     end
     let
-        x = reshape_implicit!(
+        x = RKParameterizationImplicitQR{BigFloat}(3)(
             Vector{BigFloat}(undef, 9),
             BigFloat[1 2 3; 4 5 6; 7 8 9])
         @test x == BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9]
@@ -177,7 +176,7 @@ end
 end
 
 
-################################################### RESIDUALS AND COST FUNCTIONS
+###################################################################### RESIDUALS
 
 
 function test_residuals(::Type{T}, method::Function, order::Int) where {T}
@@ -202,6 +201,20 @@ function test_residuals(::Type{T}, method::Function, order::Int) where {T}
 
     return nothing
 end
+
+
+using RungeKuttaToolKit.ExampleMethods: RK4, GL6
+
+
+@testset "residual calculation" begin
+    for T in NUMERIC_TYPES
+        test_residuals(T, RK4, 4)
+        test_residuals(T, GL6, 6)
+    end
+end
+
+
+################################################################# COST FUNCTIONS
 
 
 using RungeKuttaToolKit.RKCost
@@ -260,17 +273,6 @@ function test_cost_functions(::Type{T}, method::Function, order::Int) where {T}
     end
 
     return nothing
-end
-
-
-using RungeKuttaToolKit.ExampleMethods: RK4, GL6
-
-
-@testset "residual calculation" begin
-    for T in NUMERIC_TYPES
-        test_residuals(T, RK4, 4)
-        test_residuals(T, GL6, 6)
-    end
 end
 
 
