@@ -4,10 +4,29 @@ using StatsBase: sample
 using Test
 
 
+const MAX_ORDER = 10
+const MAX_NUM_STAGES = 20
+const NUM_RANDOM_TRIALS = 10
 const NUMERIC_TYPES = [
     Float16, Float32, Float64, BigFloat,
     Float64x1, Float64x2, Float64x3, Float64x4,
     Float64x5, Float64x6, Float64x7, Float64x8]
+
+
+const ALL_TREES = all_rooted_trees(MAX_ORDER)
+@inline random_trees() = sample(
+    ALL_TREES, rand(1:length(ALL_TREES));
+    replace=false, ordered=false)
+
+
+function relative_difference(x::T, y::T) where {T}
+    if iszero(x) & iszero(y)
+        return zero(T)
+    else
+        half_diff = abs(x - y) / (abs(x) + abs(y))
+        return half_diff + half_diff
+    end
+end
 
 
 function maximum_relative_difference(
@@ -17,25 +36,23 @@ function maximum_relative_difference(
     @assert axes(xs) == axes(ys)
     result = zero(T)
     for (x, y) in zip(xs, ys)
-        if !(iszero(x) & iszero(y))
-            half_diff = abs(x - y) / (abs(x) + abs(y))
-            diff = half_diff + half_diff
-            if diff > result
-                result = diff
-            end
+        diff = relative_difference(x, y)
+        if diff > result
+            result = diff
         end
     end
     return result
 end
 
 
-################################################################################
+############################################################## RESHAPE OPERATORS
 
 
-using RungeKuttaToolKit: reshape_explicit!
+using RungeKuttaToolKit: reshape_explicit!,
+    reshape_diagonally_implicit!, reshape_implicit!
 
 
-@testset "reshape_explicit!" begin
+@testset "reshape operators" begin
     let
         A, b = reshape_explicit!(
             Matrix{BigFloat}(undef, 3, 3),
@@ -63,16 +80,6 @@ using RungeKuttaToolKit: reshape_explicit!
             BigFloat[0 0 0; 1 0 0; 2 3 0])
         @test x == BigFloat[1, 2, 3]
     end
-end
-
-
-################################################################################
-
-
-using RungeKuttaToolKit: reshape_diagonally_implicit!
-
-
-@testset "reshape_diagonally_implicit!" begin
     let
         A, b = reshape_diagonally_implicit!(
             Matrix{BigFloat}(undef, 3, 3),
@@ -100,16 +107,6 @@ using RungeKuttaToolKit: reshape_diagonally_implicit!
             BigFloat[1 0 0; 2 3 0; 4 5 6])
         @test x == BigFloat[1, 2, 3, 4, 5, 6]
     end
-end
-
-
-################################################################################
-
-
-using RungeKuttaToolKit: reshape_implicit!
-
-
-@testset "reshape_implicit!" begin
     let
         A, b = reshape_implicit!(
             Matrix{BigFloat}(undef, 3, 3),
@@ -140,13 +137,13 @@ using RungeKuttaToolKit: reshape_implicit!
 end
 
 
-################################################################################
+##################################################### RKOCEVALUATOR CONSTRUCTION
 
 
 using RungeKuttaToolKit.ButcherInstructions: execute_instructions
 
 
-function test_instructions(::Type{T}, order::Int) where {T}
+function test_complete(::Type{T}, order::Int) where {T}
     ev = RKOCEvaluator{T}(order, 0)
     @test all(i == j for (i, j) in pairs(ev.table.selected_indices))
     @test execute_instructions(ev.table.instructions) == all_rooted_trees(order)
@@ -154,21 +151,29 @@ function test_instructions(::Type{T}, order::Int) where {T}
 end
 
 
-@testset "RKOCEvaluator{T}($order, num_stages)" for order = 0:10
-    for T in NUMERIC_TYPES
-        test_instructions(T, order)
+function test_incomplete(::Type{T}, order::Int) where {T}
+    trees = random_trees()
+    ev = RKOCEvaluator{T}(trees, 0)
+    computed_trees = execute_instructions(ev.table.instructions)
+    @test computed_trees[ev.table.selected_indices] == trees
+    @test ev.inv_gamma == inv.(T.(butcher_density.(trees)))
+end
+
+
+@testset "RKOCEvaluator construction" begin
+    for order = 0:MAX_ORDER
+        for T in NUMERIC_TYPES
+            test_complete(T, order)
+            test_incomplete(T, order)
+        end
     end
 end
 
 
-################################################################################
+################################################### RESIDUALS AND COST FUNCTIONS
 
 
 function test_residuals(::Type{T}, method::Function, order::Int) where {T}
-
-    _zero = zero(T)
-    _eps = eps(T)
-    _eps_2 = _eps * _eps
 
     A, b = method(T)
     num_stages = length(b)
@@ -176,34 +181,98 @@ function test_residuals(::Type{T}, method::Function, order::Int) where {T}
     @assert size(b) == (num_stages,)
     ev = RKOCEvaluator{T}(order, num_stages)
 
-    if isbitstype(T)
-        @test iszero(@allocated ev(A, b))
-    end
-    @test _zero <= ev(A, b) < _eps_2
-
     residuals = similar(ev.inv_gamma)
     if isbitstype(T)
         @test iszero(@allocated ev(residuals, A, b))
     else
         ev(residuals, A, b)
     end
+
+    _eps = eps(T)
     @test all(abs(residual) < _eps for residual in residuals)
+    @test ev(A, b) == residuals
+    @test all(abs(residual) < _eps for residual in ev(A, b))
 
     return nothing
+end
 
+
+function test_cost_functions(::Type{T}, method::Function, order::Int) where {T}
+
+    A, b = method(T)
+    num_stages = length(b)
+    @assert size(A) == (num_stages, num_stages)
+    @assert size(b) == (num_stages,)
+    ev = RKOCEvaluator{T}(order, num_stages)
+
+    l1_cost = L1RKObjective{T}()
+    l2_cost = L2RKObjective{T}()
+    linf_cost = LInfinityRKObjective{T}()
+    huber_cost = HuberRKObjective{T}(one(T))
+
+    if isbitstype(T)
+        @test iszero(@allocated ev(l1_cost, A, b))
+        @test iszero(@allocated ev(l2_cost, A, b))
+        @test iszero(@allocated ev(linf_cost, A, b))
+        @test iszero(@allocated ev(huber_cost, A, b))
+    end
+
+    _zero = zero(T)
+    _eps = eps(T)
+    _eps_l1 = _eps * T(length(ev.inv_gamma))
+    _eps_2 = _eps * _eps
+
+    @test _zero <= ev(l1_cost, A, b) < _eps_l1
+    @test _zero <= ev(l2_cost, A, b) < _eps_2
+    @test _zero <= ev(linf_cost, A, b) < _eps
+    @test _zero <= ev(huber_cost, A, b) < _eps_2
+
+    for _ = 1:NUM_RANDOM_TRIALS
+
+        weights = rand(T, length(ev.inv_gamma))
+        weighted_l1_cost = WeightedL1RKObjective{T}(weights)
+        weighted_l2_cost = WeightedL2RKObjective{T}(weights)
+        weighted_linf_cost = WeightedLInfinityRKObjective{T}(weights)
+        weighted_huber_cost = WeightedHuberRKObjective{T}(one(T), weights)
+
+        if isbitstype(T)
+            @test iszero(@allocated ev(weighted_l1_cost, A, b))
+            @test iszero(@allocated ev(weighted_l2_cost, A, b))
+            @test iszero(@allocated ev(weighted_linf_cost, A, b))
+            @test iszero(@allocated ev(weighted_huber_cost, A, b))
+        end
+
+        @test _zero <= ev(weighted_l1_cost, A, b) < _eps_l1
+        @test _zero <= ev(weighted_l2_cost, A, b) < _eps_2
+        @test _zero <= ev(weighted_linf_cost, A, b) < _eps
+        @test _zero <= ev(weighted_huber_cost, A, b) < _eps_2
+
+    end
+
+    return nothing
 end
 
 
 using RungeKuttaToolKit.ExampleMethods: RK4, GL6
 
 
-@testset "Residual calculation ($T)" for T in NUMERIC_TYPES
-    test_residuals(T, RK4, 4)
-    test_residuals(T, GL6, 6)
+@testset "residual calculation" begin
+    for T in NUMERIC_TYPES
+        test_residuals(T, RK4, 4)
+        test_residuals(T, GL6, 6)
+    end
 end
 
 
-################################################################################
+@testset "cost functions" begin
+    for T in NUMERIC_TYPES
+        test_cost_functions(T, RK4, 4)
+        test_cost_functions(T, GL6, 6)
+    end
+end
+
+
+######################################################## DIRECTIONAL DERIVATIVES
 
 
 function test_directional_derivatives(::Type{T}) where {T}
@@ -213,15 +282,11 @@ function test_directional_derivatives(::Type{T}) where {T}
     _2_sqrt_eps = _sqrt_eps + _sqrt_eps
     _4_sqrt_eps = _2_sqrt_eps + _2_sqrt_eps
     h = _sqrt_eps
-    all_trees = all_rooted_trees(10)
 
-    for num_stages = 0:20
+    for num_stages = 0:MAX_NUM_STAGES
 
-        trees = sample(all_trees, rand(1:length(all_trees));
-            replace=false, ordered=false)
-        weights = rand(T, length(trees))
+        trees = random_trees()
         ev = RKOCEvaluator{T}(trees, num_stages)
-        wev = WeightedRKOCEvaluator{T}(trees, weights, num_stages)
 
         A = rand(T, num_stages, num_stages)
         b = rand(T, num_stages)
@@ -241,22 +306,7 @@ function test_directional_derivatives(::Type{T}) where {T}
         ev(residuals_lo, A - h * dA, b - h * db)
         dresiduals_numerical = (residuals_hi - residuals_lo) / (h + h)
 
-        # num_stages == 1 is pathological for some reason.
-        if num_stages != 1
-            @test maximum_relative_difference(
-                dresiduals_analytic, dresiduals_numerical) < _4_sqrt_eps
-        end
-
-        if isbitstype(T)
-            @test iszero(@allocated wev'(dresiduals_analytic, A, dA, b, db))
-        else
-            wev'(dresiduals_analytic, A, dA, b, db)
-        end
-
-        wev(residuals_hi, A + h * dA, b + h * db)
-        wev(residuals_lo, A - h * dA, b - h * db)
-        dresiduals_numerical = (residuals_hi - residuals_lo) / (h + h)
-
+        # num_stages == 1 is pathological.
         if num_stages != 1
             @test maximum_relative_difference(
                 dresiduals_analytic, dresiduals_numerical) < _4_sqrt_eps
@@ -264,15 +314,18 @@ function test_directional_derivatives(::Type{T}) where {T}
 
     end
 
+    return nothing
 end
 
 
-@testset "Directional derivatives ($T)" for T in NUMERIC_TYPES
-    test_directional_derivatives(T)
+@testset "directional derivatives" begin
+    for T in NUMERIC_TYPES
+        test_directional_derivatives(T)
+    end
 end
 
 
-################################################################################
+############################################################ PARTIAL DERIVATIVES
 
 
 function test_partial_derivatives(::Type{T}) where {T}
@@ -280,85 +333,69 @@ function test_partial_derivatives(::Type{T}) where {T}
     _eps = eps(T)
     _2_eps = _eps + _eps
     _4_eps = _2_eps + _2_eps
-    all_trees = all_rooted_trees(10)
 
-    for num_stages = 1:20
+    for num_stages = 1:MAX_NUM_STAGES
 
-        trees = sample(all_trees, rand(1:length(all_trees));
-            replace=false, ordered=false)
-        weights = rand(T, length(trees))
+        trees = random_trees()
         ev = RKOCEvaluator{T}(trees, num_stages)
-        wev = WeightedRKOCEvaluator{T}(trees, weights, num_stages)
 
         A = rand(T, num_stages, num_stages)
         b = rand(T, num_stages)
         i = rand(1:num_stages)
         j = rand(1:num_stages)
+        k = rand(1:num_stages)
 
         dresiduals_fast = Vector{T}(undef, length(trees))
+        dresiduals_slow = Vector{T}(undef, length(trees))
+        dA = zeros(T, num_stages, num_stages)
+        db = zeros(T, num_stages)
+
         if isbitstype(T)
             @test iszero(@allocated ev'(dresiduals_fast, A, i, j, b))
         else
             ev'(dresiduals_fast, A, i, j, b)
         end
 
-        dA = zeros(T, num_stages, num_stages)
-        db = zeros(T, num_stages)
         dA[i, j] = one(T)
-
-        dresiduals_slow = Vector{T}(undef, length(trees))
         ev'(dresiduals_slow, A, dA, b, db)
+        dA[i, j] = zero(T)
 
         @test maximum_relative_difference(
             dresiduals_fast, dresiduals_slow) < _4_eps
 
-        if isbitstype(T)
-            @test iszero(@allocated wev'(dresiduals_fast, A, i, j, b))
-        else
-            wev'(dresiduals_fast, A, i, j, b)
-        end
-
-        wev'(dresiduals_slow, A, dA, b, db)
-
-        @test maximum_relative_difference(
-            dresiduals_fast, dresiduals_slow) < _4_eps
-
-        k = rand(1:num_stages)
         if isbitstype(T)
             @test iszero(@allocated ev'(dresiduals_fast, A, k))
         else
             ev'(dresiduals_fast, A, k)
         end
 
-        dA[i, j] = zero(T)
         db[k] = one(T)
         ev'(dresiduals_slow, A, dA, b, db)
-
-        @test iszero(maximum_relative_difference(
-            dresiduals_fast, dresiduals_slow))
-
-        if isbitstype(T)
-            @test iszero(@allocated wev'(dresiduals_fast, A, k))
-        else
-            wev'(dresiduals_fast, A, k)
-        end
-
-        wev'(dresiduals_slow, A, dA, b, db)
+        db[k] = zero(T)
 
         @test iszero(maximum_relative_difference(
             dresiduals_fast, dresiduals_slow))
 
     end
 
+    return nothing
 end
 
 
-@testset "Partial derivatives ($T)" for T in NUMERIC_TYPES
-    test_partial_derivatives(T)
+@testset "partial derivatives" begin
+    for T in NUMERIC_TYPES
+        test_partial_derivatives(T)
+    end
 end
 
 
-################################################################################
+###################################################################### GRADIENTS
+
+
+# This needs to be a separate function to trigger
+# recompilation for each type of cost function.
+test_gradient_allocs(ev, gA, gb, obj, A, b) =
+    @test iszero(@allocated ev'(gA, gb, obj, A, b))
 
 
 function test_gradient(::Type{T}) where {T}
@@ -366,86 +403,74 @@ function test_gradient(::Type{T}) where {T}
     _eps = eps(T)
     _sqrt_eps = sqrt(_eps)
     tolerance = _sqrt_eps
-    for _ = 1:10
+    for _ = 1:8
         tolerance += tolerance
     end
     h = _sqrt_eps
-    all_trees = all_rooted_trees(10)
 
-    for num_stages = 0:8
+    for num_stages = 0:MAX_NUM_STAGES
 
-        trees = sample(all_trees, rand(1:length(all_trees));
-            replace=false, ordered=false)
-        weights = rand(T, length(trees))
+        trees = random_trees()
         ev = RKOCEvaluator{T}(trees, num_stages)
-        wev = WeightedRKOCEvaluator{T}(trees, weights, num_stages)
 
         A = rand(T, num_stages, num_stages)
         b = rand(T, num_stages)
-        gA_analytic = similar(A)
-        gb_analytic = similar(b)
-
-        if isbitstype(T)
-            @test iszero(@allocated ev'(gA_analytic, gb_analytic, A, b))
-        else
-            ev'(gA_analytic, gb_analytic, A, b)
-        end
-
+        gA = similar(A)
+        gb = similar(b)
         dA = zeros(T, num_stages, num_stages)
         db = zeros(T, num_stages)
-        gA_numerical = similar(A)
-        gb_numerical = similar(b)
-        for i = 1:num_stages
-            for j = 1:num_stages
-                dA[i, j] = one(T)
-                gA_numerical[i, j] = (
-                    ev(A + h * dA, b) - ev(A - h * dA, b)) / (h + h)
-                dA[i, j] = zero(T)
+
+        l1_cost = L1RKObjective{T}()
+        l2_cost = L2RKObjective{T}()
+        linf_cost = LInfinityRKObjective{T}()
+        huber_cost = HuberRKObjective{T}(one(T))
+
+        weights = rand(T, length(ev.inv_gamma))
+        weighted_l1_cost = WeightedL1RKObjective{T}(weights)
+        weighted_l2_cost = WeightedL2RKObjective{T}(weights)
+        weighted_linf_cost = WeightedLInfinityRKObjective{T}(weights)
+        weighted_huber_cost = WeightedHuberRKObjective{T}(one(T), weights)
+
+        for obj in [l2_cost, weighted_l2_cost]
+
+            if isbitstype(T)
+                test_gradient_allocs(ev, gA, gb, obj, A, b)
+            else
+                ev'(gA, gb, obj, A, b)
             end
-        end
-        for k = 1:num_stages
-            db[k] = one(T)
-            gb_numerical[k] = (
-                ev(A, b + h * db) - ev(A, b - h * db)) / (h + h)
-            db[k] = zero(T)
-        end
 
-        @test maximum_relative_difference(
-            gA_analytic, gA_numerical) < tolerance
-        @test maximum_relative_difference(
-            gb_analytic, gb_numerical) < tolerance
+            if num_stages > 0
+                for _ = 1:NUM_RANDOM_TRIALS
 
-        if isbitstype(T)
-            @test iszero(@allocated wev'(gA_analytic, gb_analytic, A, b))
-        else
-            wev'(gA_analytic, gb_analytic, A, b)
-        end
+                    i = rand(1:num_stages)
+                    j = rand(1:num_stages)
+                    k = rand(1:num_stages)
 
-        for i = 1:num_stages
-            for j = 1:num_stages
-                dA[i, j] = one(T)
-                gA_numerical[i, j] = (
-                    wev(A + h * dA, b) - wev(A - h * dA, b)) / (h + h)
-                dA[i, j] = zero(T)
+                    dA[i, j] = one(T)
+                    nA = (ev(obj, A + h * dA, b) -
+                          ev(obj, A - h * dA, b)) / (h + h)
+                    dA[i, j] = zero(T)
+                    db[k] = one(T)
+                    nb = (ev(obj, A, b + h * db) -
+                          ev(obj, A, b - h * db)) / (h + h)
+                    db[k] = zero(T)
+
+                    @test !(relative_difference(gA[i, j], nA) > tolerance)
+                    @test !(relative_difference(gb[k], nb) > tolerance)
+
+                end
             end
-        end
-        for k = 1:num_stages
-            db[k] = one(T)
-            gb_numerical[k] = (
-                wev(A, b + h * db) - wev(A, b - h * db)) / (h + h)
-            db[k] = zero(T)
-        end
 
-        @test maximum_relative_difference(
-            gA_analytic, gA_numerical) < tolerance
-        @test maximum_relative_difference(
-            gb_analytic, gb_numerical) < tolerance
+        end
 
     end
 
+    return nothing
 end
 
 
-@testset "Gradient ($T)" for T in NUMERIC_TYPES
-    test_gradient(T)
+@testset "gradients" begin
+    for T in NUMERIC_TYPES
+        test_gradient(T)
+    end
 end
