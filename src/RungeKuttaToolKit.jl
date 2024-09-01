@@ -308,7 +308,7 @@ end
 # Here, ``s`` denotes the number of stages specified when constructing `ev`.
 # """
 function (ev::AbstractRKOCEvaluator{T})(
-    obj::AbstractRKCost{T},
+    cost::AbstractRKCost{T},
     A::AbstractMatrix{T},
     b::AbstractVector{T},
 ) where {T}
@@ -319,7 +319,7 @@ function (ev::AbstractRKOCEvaluator{T})(
     @assert axes(b) == (stage_axis,)
 
     compute_Phi!(ev, A)
-    return obj(ev, b)
+    return cost(ev, b)
 end
 
 
@@ -769,15 +769,15 @@ end
 function (adj::RKOCAdjoint{T})(
     dA::AbstractMatrix{T},
     db::AbstractVector{T},
-    obj::AbstractRKCost{T},
+    cost::AbstractRKCost{T},
     A::AbstractMatrix{T},
     b::AbstractVector{T},
 ) where {T}
     compute_Phi!(adj.ev, A)
-    obj(adj, b)
+    cost(adj, b)
     pullback_dPhi!(adj.ev, A)
     pullback_dA!(dA, adj.ev)
-    obj(db, adj, b)
+    cost(db, adj, b)
     return (dA, db)
 end
 
@@ -791,6 +791,74 @@ end
 # @inline inv_sqrt(x::Float64) = rsqrt(x)
 # @inline inv_sqrt(x::MultiFloat{T,N}) where {T,N} = rsqrt(x)
 # @inline inv_sqrt(x::T) where {T} = inv(sqrt(x))
+
+
+################################################################################
+
+
+export RKOCOptimizationProblem
+
+
+struct RKOCOptimizationProblem{T,
+    E<:AbstractRKOCEvaluator{T},
+    C<:AbstractRKCost{T},
+    P<:AbstractRKParameterization{T}}
+
+    ev::E
+    cost::C
+    param::P
+    A::Matrix{T}
+    dA::Matrix{T}
+    b::Vector{T}
+    db::Vector{T}
+
+    function RKOCOptimizationProblem(ev::E, cost::C, param::P) where {T,
+        E<:AbstractRKOCEvaluator{T},
+        C<:AbstractRKCost{T},
+        P<:AbstractRKParameterization{T}}
+
+        stage_axis, _, _ = get_axes(ev)
+        @assert param.num_stages == length(stage_axis)
+
+        A = Matrix{T}(undef, param.num_stages, param.num_stages)
+        dA = Matrix{T}(undef, param.num_stages, param.num_stages)
+        b = Vector{T}(undef, param.num_stages)
+        db = Vector{T}(undef, param.num_stages)
+        return new{T,E,C,P}(ev, cost, param, A, dA, b, db)
+    end
+end
+
+
+function (prob::RKOCOptimizationProblem{T,E,C,P})(
+    x::AbstractVector{T},
+) where {T,
+    E<:AbstractRKOCEvaluator{T},
+    C<:AbstractRKCost{T},
+    P<:AbstractRKParameterization{T}}
+
+    @assert length(x) == prob.param.num_variables
+
+    prob.param(prob.A, prob.b, x)
+    return prob.ev(prob.cost, prob.A, prob.b)
+end
+
+
+function (prob::RKOCOptimizationProblem{T,E,C,P})(
+    g::AbstractVector{T},
+    x::AbstractVector{T},
+) where {T,
+    E<:AbstractRKOCEvaluator{T},
+    C<:AbstractRKCost{T},
+    P<:AbstractRKParameterization{T}}
+
+    @assert axes(g) == axes(x)
+    @assert length(g) == prob.param.num_variables
+
+    prob.param(prob.A, prob.b, x)
+    prob.ev'(prob.dA, prob.db, prob.cost, prob.A, prob.b)
+    prob.param(g, prob.dA, prob.db)
+    return g
+end
 
 
 end # module RungeKuttaToolKit

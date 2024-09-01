@@ -406,8 +406,8 @@ end
 
 # This needs to be a separate function to trigger
 # recompilation for each type of cost function.
-test_gradient_allocs(ev, gA, gb, obj, A, b) =
-    @test iszero(@allocated ev'(gA, gb, obj, A, b))
+test_gradient_allocs(ev, gA, gb, cost, A, b) =
+    @test iszero(@allocated ev'(gA, gb, cost, A, b))
 
 
 function test_gradient(::Type{T}) where {T}
@@ -443,12 +443,12 @@ function test_gradient(::Type{T}) where {T}
         weighted_linf_cost = RKCostWeightedLInfinity{T}(weights)
         weighted_huber_cost = RKCostWeightedHuber{T}(one(T), weights)
 
-        for obj in [l2_cost, weighted_l2_cost]
+        for cost in [l2_cost, weighted_l2_cost]
 
             if isbitstype(T)
-                test_gradient_allocs(ev, gA, gb, obj, A, b)
+                test_gradient_allocs(ev, gA, gb, cost, A, b)
             else
-                ev'(gA, gb, obj, A, b)
+                ev'(gA, gb, cost, A, b)
             end
 
             if num_stages > 0
@@ -459,12 +459,12 @@ function test_gradient(::Type{T}) where {T}
                     k = rand(1:num_stages)
 
                     dA[i, j] = one(T)
-                    nA = (ev(obj, A + h * dA, b) -
-                          ev(obj, A - h * dA, b)) / (h + h)
+                    nA = (ev(cost, A + h * dA, b) -
+                          ev(cost, A - h * dA, b)) / (h + h)
                     dA[i, j] = zero(T)
                     db[k] = one(T)
-                    nb = (ev(obj, A, b + h * db) -
-                          ev(obj, A, b - h * db)) / (h + h)
+                    nb = (ev(cost, A, b + h * db) -
+                          ev(cost, A, b - h * db)) / (h + h)
                     db[k] = zero(T)
 
                     @test !(relative_difference(gA[i, j], nA) > tolerance)

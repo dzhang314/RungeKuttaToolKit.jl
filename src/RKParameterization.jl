@@ -11,10 +11,11 @@ using ..RungeKuttaToolKit: PERFORM_INTERNAL_BOUNDS_CHECKS,
 export RKParameterizationExplicit
 
 
-struct RKParameterizationExplicit{T} <:
-       AbstractRKParameterization{T}
+struct RKParameterizationExplicit{T} <: AbstractRKParameterization{T}
+
     num_stages::Int
     num_variables::Int
+
     @inline RKParameterizationExplicit{T}(s::Int) where {T} =
         new{T}(s, (s * (s + 1)) >> 1)
 end
@@ -98,10 +99,11 @@ end
 export RKParameterizationExplicitQR
 
 
-struct RKParameterizationExplicitQR{T} <:
-       AbstractRKParameterization{T}
+struct RKParameterizationExplicitQR{T} <: AbstractRKParameterization{T}
+
     num_stages::Int
     num_variables::Int
+
     @inline RKParameterizationExplicitQR{T}(s::Int) where {T} =
         new{T}(s, (s * (s - 1)) >> 1)
 end
@@ -171,10 +173,11 @@ end
 export RKParameterizationDiagonallyImplicit
 
 
-struct RKParameterizationDiagonallyImplicit{T} <:
-       AbstractRKParameterization{T}
+struct RKParameterizationDiagonallyImplicit{T} <: AbstractRKParameterization{T}
+
     num_stages::Int
     num_variables::Int
+
     @inline RKParameterizationDiagonallyImplicit{T}(s::Int) where {T} =
         new{T}(s, (s * (s + 3)) >> 1)
 end
@@ -260,8 +263,10 @@ export RKParameterizationDiagonallyImplicitQR
 
 struct RKParameterizationDiagonallyImplicitQR{T} <:
        AbstractRKParameterization{T}
+
     num_stages::Int
     num_variables::Int
+
     @inline RKParameterizationDiagonallyImplicitQR{T}(s::Int) where {T} =
         new{T}(s, (s * (s + 1)) >> 1)
 end
@@ -332,8 +337,10 @@ export RKParameterizationImplicit
 
 
 struct RKParameterizationImplicit{T} <: AbstractRKParameterization{T}
+
     num_stages::Int
     num_variables::Int
+
     @inline RKParameterizationImplicit{T}(s::Int) where {T} =
         new{T}(s, s * (s + 1))
 end
@@ -413,8 +420,10 @@ export RKParameterizationImplicitQR
 
 
 struct RKParameterizationImplicitQR{T} <: AbstractRKParameterization{T}
+
     num_stages::Int
     num_variables::Int
+
     @inline RKParameterizationImplicitQR{T}(s::Int) where {T} =
         new{T}(s, s * s)
 end

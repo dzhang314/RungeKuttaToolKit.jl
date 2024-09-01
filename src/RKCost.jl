@@ -47,7 +47,7 @@ struct RKCostWeightedL1{T} <: AbstractRKCost{T}
 end
 
 
-function (obj::RKCostWeightedL1{T})(
+function (cost::RKCostWeightedL1{T})(
     ev::AbstractRKOCEvaluator{T},
     b::AbstractVector{T},
 ) where {T}
@@ -55,14 +55,14 @@ function (obj::RKCostWeightedL1{T})(
     # Validate array dimensions.
     stage_axis, _, output_axis = get_axes(ev)
     @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(obj.weights) == (output_axis,)
+        @assert axes(cost.weights) == (output_axis,)
         @assert axes(b) == (stage_axis,)
     end
 
     # Compute weighted L1 norm of residuals.
     result = zero(T)
     @inbounds for i in output_axis
-        result += obj.weights[i] * abs(compute_residual(ev, b, i))
+        result += cost.weights[i] * abs(compute_residual(ev, b, i))
     end
 
     return result
@@ -177,7 +177,7 @@ struct RKCostWeightedL2{T} <: AbstractRKCost{T}
 end
 
 
-function (obj::RKCostWeightedL2{T})(
+function (cost::RKCostWeightedL2{T})(
     ev::AbstractRKOCEvaluator{T},
     b::AbstractVector{T},
 ) where {T}
@@ -185,21 +185,21 @@ function (obj::RKCostWeightedL2{T})(
     # Validate array dimensions.
     stage_axis, _, output_axis = get_axes(ev)
     @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(obj.weights) == (output_axis,)
+        @assert axes(cost.weights) == (output_axis,)
         @assert axes(b) == (stage_axis,)
     end
 
     # Compute weighted L2 norm of residuals.
     result = zero(T)
     @inbounds for i in output_axis
-        result += obj.weights[i] * abs2(compute_residual(ev, b, i))
+        result += cost.weights[i] * abs2(compute_residual(ev, b, i))
     end
 
     return result
 end
 
 
-function (obj::RKCostWeightedL2{T})(
+function (cost::RKCostWeightedL2{T})(
     adj::AbstractRKOCAdjoint{T},
     b::AbstractVector{T},
 ) where {T}
@@ -207,7 +207,7 @@ function (obj::RKCostWeightedL2{T})(
     # Validate array dimensions.
     stage_axis, _, output_axis = get_axes(adj.ev)
     @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(obj.weights) == (output_axis,)
+        @assert axes(cost.weights) == (output_axis,)
         @assert axes(b) == (stage_axis,)
     end
 
@@ -222,7 +222,7 @@ function (obj::RKCostWeightedL2{T})(
             end
         else
             residual = compute_residual(adj.ev, b, i)
-            derivative = obj.weights[i] * (residual + residual)
+            derivative = cost.weights[i] * (residual + residual)
             @simd ivdep for j in stage_axis
                 adj.ev.dPhi[j, k] = derivative * b[j]
             end
@@ -233,7 +233,7 @@ function (obj::RKCostWeightedL2{T})(
 end
 
 
-function (obj::RKCostWeightedL2{T})(
+function (cost::RKCostWeightedL2{T})(
     db::AbstractVector{T},
     adj::AbstractRKOCAdjoint{T},
     b::AbstractVector{T},
@@ -242,7 +242,7 @@ function (obj::RKCostWeightedL2{T})(
     # Validate array dimensions.
     stage_axis, _, output_axis = get_axes(adj.ev)
     @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(obj.weights) == (output_axis,)
+        @assert axes(cost.weights) == (output_axis,)
         @assert axes(db) == (stage_axis,)
         @assert axes(b) == (stage_axis,)
     end
@@ -258,7 +258,7 @@ function (obj::RKCostWeightedL2{T})(
     # Compute db using derivative of weighted L2 norm.
     @inbounds for (i, k) in pairs(adj.ev.table.selected_indices)
         residual = compute_residual(adj.ev, b, i)
-        derivative = obj.weights[i] * (residual + residual)
+        derivative = cost.weights[i] * (residual + residual)
         @simd ivdep for j in stage_axis
             db[j] += derivative * adj.ev.Phi[j, k]
         end
@@ -309,7 +309,7 @@ struct RKCostWeightedLInfinity{T} <: AbstractRKCost{T}
 end
 
 
-function (obj::RKCostWeightedLInfinity{T})(
+function (cost::RKCostWeightedLInfinity{T})(
     ev::AbstractRKOCEvaluator{T},
     b::AbstractVector{T},
 ) where {T}
@@ -317,14 +317,14 @@ function (obj::RKCostWeightedLInfinity{T})(
     # Validate array dimensions.
     stage_axis, _, output_axis = get_axes(ev)
     @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(obj.weights) == (output_axis,)
+        @assert axes(cost.weights) == (output_axis,)
         @assert axes(b) == (stage_axis,)
     end
 
     # Compute weighted LInfinity norm of residuals.
     result = zero(T)
     @inbounds for i in output_axis
-        result = max(result, obj.weights[i] * abs(compute_residual(ev, b, i)))
+        result = max(result, cost.weights[i] * abs(compute_residual(ev, b, i)))
     end
 
     return result
@@ -349,7 +349,7 @@ function huber_loss(delta::T, x::T) where {T}
 end
 
 
-function (obj::RKCostHuber{T})(
+function (cost::RKCostHuber{T})(
     ev::AbstractRKOCEvaluator{T},
     b::AbstractVector{T}
 ) where {T}
@@ -363,7 +363,7 @@ function (obj::RKCostHuber{T})(
     # Compute sum of Huber losses of residuals.
     result = zero(T)
     @inbounds for i in output_axis
-        result += huber_loss(obj.delta, compute_residual(ev, b, i))
+        result += huber_loss(cost.delta, compute_residual(ev, b, i))
     end
 
     return result
@@ -382,7 +382,7 @@ struct RKCostWeightedHuber{T} <: AbstractRKCost{T}
 end
 
 
-function (obj::RKCostWeightedHuber{T})(
+function (cost::RKCostWeightedHuber{T})(
     ev::AbstractRKOCEvaluator{T},
     b::AbstractVector{T}
 ) where {T}
@@ -390,14 +390,14 @@ function (obj::RKCostWeightedHuber{T})(
     # Validate array dimensions.
     stage_axis, _, output_axis = get_axes(ev)
     @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(obj.weights) == (output_axis,)
+        @assert axes(cost.weights) == (output_axis,)
         @assert axes(b) == (stage_axis,)
     end
 
     # Compute weighted sum of Huber losses of residuals.
     result = zero(T)
     @inbounds for i in output_axis
-        result += obj.weights[i] * huber_loss(obj.delta,
+        result += cost.weights[i] * huber_loss(cost.delta,
             compute_residual(ev, b, i))
     end
 
