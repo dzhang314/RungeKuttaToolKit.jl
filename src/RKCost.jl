@@ -36,6 +36,105 @@ function (::RKCostL1{T})(
 end
 
 
+function (::RKCostL1{T})(
+    adj::AbstractRKOCAdjoint{T},
+    b::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, output_axis = get_axes(adj.ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(b) == (stage_axis,)
+    end
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    # Compute tolerance for comparison to zero.
+    max_abs_residual = _zero
+    for i in output_axis
+        max_abs_residual = max(max_abs_residual,
+            abs(compute_residual(adj.ev, b, i)))
+    end
+    pos_tolerance = eps(T) * max_abs_residual
+    neg_tolerance = -pos_tolerance
+
+    # Initialize dPhi using derivative of L1 norm.
+    @inbounds for (k, i) in Iterators.reverse(pairs(adj.ev.table.source_indices))
+        if i == NULL_INDEX
+            @simd ivdep for j in stage_axis
+                adj.ev.dPhi[j, k] = _zero
+            end
+        else
+            residual = compute_residual(adj.ev, b, i)
+            if residual < neg_tolerance
+                @simd ivdep for j in stage_axis
+                    adj.ev.dPhi[j, k] = -b[j]
+                end
+            elseif residual > pos_tolerance
+                @simd ivdep for j in stage_axis
+                    adj.ev.dPhi[j, k] = b[j]
+                end
+            else
+                @simd ivdep for j in stage_axis
+                    adj.ev.dPhi[j, k] = _zero
+                end
+            end
+        end
+    end
+
+    return adj
+end
+
+
+function (::RKCostL1{T})(
+    db::AbstractVector{T},
+    adj::AbstractRKOCAdjoint{T},
+    b::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, output_axis = get_axes(adj.ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(db) == (stage_axis,)
+        @assert axes(b) == (stage_axis,)
+    end
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    # Compute tolerance for comparison to zero.
+    max_abs_residual = _zero
+    for i in output_axis
+        max_abs_residual = max(max_abs_residual,
+            abs(compute_residual(adj.ev, b, i)))
+    end
+    pos_tolerance = eps(T) * max_abs_residual
+    neg_tolerance = -pos_tolerance
+
+    # Initialize db to zero.
+    @simd ivdep for i in stage_axis
+        @inbounds db[i] = _zero
+    end
+
+    # Compute db using derivative of L1 norm.
+    @inbounds for (i, k) in pairs(adj.ev.table.selected_indices)
+        residual = compute_residual(adj.ev, b, i)
+        if residual < neg_tolerance
+            @simd ivdep for j in stage_axis
+                db[j] -= adj.ev.Phi[j, k]
+            end
+        elseif residual > pos_tolerance
+            @simd ivdep for j in stage_axis
+                db[j] += adj.ev.Phi[j, k]
+            end
+        end
+    end
+
+    return db
+end
+
+
 #################################################################### WEIGHTED L1
 
 
@@ -66,6 +165,109 @@ function (cost::RKCostWeightedL1{T})(
     end
 
     return result
+end
+
+
+function (cost::RKCostWeightedL1{T})(
+    adj::AbstractRKOCAdjoint{T},
+    b::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, output_axis = get_axes(adj.ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(b) == (stage_axis,)
+    end
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    # Compute tolerance for comparison to zero.
+    max_abs_residual = _zero
+    for i in output_axis
+        max_abs_residual = max(max_abs_residual,
+            abs(compute_residual(adj.ev, b, i)))
+    end
+    pos_tolerance = eps(T) * max_abs_residual
+    neg_tolerance = -pos_tolerance
+
+    # Initialize dPhi using derivative of weighted L1 norm.
+    @inbounds for (k, i) in Iterators.reverse(pairs(adj.ev.table.source_indices))
+        if i == NULL_INDEX
+            @simd ivdep for j in stage_axis
+                adj.ev.dPhi[j, k] = _zero
+            end
+        else
+            residual = compute_residual(adj.ev, b, i)
+            if residual < neg_tolerance
+                w = -cost.weights[i]
+                @simd ivdep for j in stage_axis
+                    adj.ev.dPhi[j, k] = w * b[j]
+                end
+            elseif residual > pos_tolerance
+                w = cost.weights[i]
+                @simd ivdep for j in stage_axis
+                    adj.ev.dPhi[j, k] = w * b[j]
+                end
+            else
+                @simd ivdep for j in stage_axis
+                    adj.ev.dPhi[j, k] = _zero
+                end
+            end
+        end
+    end
+
+    return adj
+end
+
+
+function (cost::RKCostWeightedL1{T})(
+    db::AbstractVector{T},
+    adj::AbstractRKOCAdjoint{T},
+    b::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, output_axis = get_axes(adj.ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(db) == (stage_axis,)
+        @assert axes(b) == (stage_axis,)
+    end
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    # Compute tolerance for comparison to zero.
+    max_abs_residual = _zero
+    for i in output_axis
+        max_abs_residual = max(max_abs_residual,
+            abs(compute_residual(adj.ev, b, i)))
+    end
+    pos_tolerance = eps(T) * max_abs_residual
+    neg_tolerance = -pos_tolerance
+
+    # Initialize db to zero.
+    @simd ivdep for i in stage_axis
+        @inbounds db[i] = _zero
+    end
+
+    # Compute db using derivative of weighted L1 norm.
+    @inbounds for (i, k) in pairs(adj.ev.table.selected_indices)
+        residual = compute_residual(adj.ev, b, i)
+        if residual < neg_tolerance
+            w = cost.weights[i]
+            @simd ivdep for j in stage_axis
+                db[j] -= w * adj.ev.Phi[j, k]
+            end
+        elseif residual > pos_tolerance
+            w = cost.weights[i]
+            @simd ivdep for j in stage_axis
+                db[j] += w * adj.ev.Phi[j, k]
+            end
+        end
+    end
+
+    return db
 end
 
 

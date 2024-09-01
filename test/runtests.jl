@@ -443,7 +443,7 @@ function test_gradient(::Type{T}) where {T}
         weighted_linf_cost = RKCostWeightedLInfinity{T}(weights)
         weighted_huber_cost = RKCostWeightedHuber{T}(one(T), weights)
 
-        for cost in [l2_cost, weighted_l2_cost]
+        for cost in [l1_cost, l2_cost, weighted_l1_cost, weighted_l2_cost]
 
             if isbitstype(T)
                 test_gradient_allocs(ev, gA, gb, cost, A, b)
