@@ -544,10 +544,24 @@ struct RKCostHuber{T} <: AbstractRKCost{T}
 end
 
 
-function huber_loss(delta::T, x::T) where {T}
+@inline function huber_loss(delta::T, x::T) where {T}
     abs_x = abs(x)
     return ((abs_x <= delta) ? (abs_x * abs_x) :
             (delta * ((abs_x + abs_x) - delta)))
+end
+
+
+@inline function huber_derivative(delta::T, x::T) where {T}
+    if x > delta
+        return delta + delta
+    else
+        neg_delta = -delta
+        if x < neg_delta
+            return neg_delta + neg_delta
+        else
+            return x + x
+        end
+    end
 end
 
 
@@ -569,6 +583,73 @@ function (cost::RKCostHuber{T})(
     end
 
     return result
+end
+
+
+function (cost::RKCostHuber{T})(
+    adj::AbstractRKOCAdjoint{T},
+    b::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, output_axis = get_axes(adj.ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(b) == (stage_axis,)
+    end
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    # Initialize dPhi using derivative of Huber loss.
+    @inbounds for (k, i) in Iterators.reverse(pairs(adj.ev.table.source_indices))
+        if i == NULL_INDEX
+            @simd ivdep for j in stage_axis
+                adj.ev.dPhi[j, k] = _zero
+            end
+        else
+            derivative = huber_derivative(cost.delta,
+                compute_residual(adj.ev, b, i))
+            @simd ivdep for j in stage_axis
+                adj.ev.dPhi[j, k] = derivative * b[j]
+            end
+        end
+    end
+
+    return adj
+end
+
+
+function (cost::RKCostHuber{T})(
+    db::AbstractVector{T},
+    adj::AbstractRKOCAdjoint{T},
+    b::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, output_axis = get_axes(adj.ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(db) == (stage_axis,)
+        @assert axes(b) == (stage_axis,)
+    end
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    # Initialize db to zero.
+    @simd ivdep for i in stage_axis
+        @inbounds db[i] = _zero
+    end
+
+    # Compute db using derivative of weighted L2 norm.
+    @inbounds for (i, k) in pairs(adj.ev.table.selected_indices)
+        derivative = huber_derivative(cost.delta,
+            compute_residual(adj.ev, b, i))
+        @simd ivdep for j in stage_axis
+            db[j] += derivative * adj.ev.Phi[j, k]
+        end
+    end
+
+    return db
 end
 
 
@@ -604,6 +685,75 @@ function (cost::RKCostWeightedHuber{T})(
     end
 
     return result
+end
+
+
+function (cost::RKCostWeightedHuber{T})(
+    adj::AbstractRKOCAdjoint{T},
+    b::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, output_axis = get_axes(adj.ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(cost.weights) == (output_axis,)
+        @assert axes(b) == (stage_axis,)
+    end
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    # Initialize dPhi using derivative of Huber loss.
+    @inbounds for (k, i) in Iterators.reverse(pairs(adj.ev.table.source_indices))
+        if i == NULL_INDEX
+            @simd ivdep for j in stage_axis
+                adj.ev.dPhi[j, k] = _zero
+            end
+        else
+            derivative = cost.weights[i] * huber_derivative(cost.delta,
+                compute_residual(adj.ev, b, i))
+            @simd ivdep for j in stage_axis
+                adj.ev.dPhi[j, k] = derivative * b[j]
+            end
+        end
+    end
+
+    return adj
+end
+
+
+function (cost::RKCostWeightedHuber{T})(
+    db::AbstractVector{T},
+    adj::AbstractRKOCAdjoint{T},
+    b::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, output_axis = get_axes(adj.ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(cost.weights) == (output_axis,)
+        @assert axes(db) == (stage_axis,)
+        @assert axes(b) == (stage_axis,)
+    end
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    # Initialize db to zero.
+    @simd ivdep for i in stage_axis
+        @inbounds db[i] = _zero
+    end
+
+    # Compute db using derivative of weighted L2 norm.
+    @inbounds for (i, k) in pairs(adj.ev.table.selected_indices)
+        derivative = cost.weights[i] * huber_derivative(cost.delta,
+            compute_residual(adj.ev, b, i))
+        @simd ivdep for j in stage_axis
+            db[j] += derivative * adj.ev.Phi[j, k]
+        end
+    end
+
+    return db
 end
 
 

@@ -431,19 +431,22 @@ function test_gradient(::Type{T}) where {T}
         gb = similar(b)
         dA = zeros(T, num_stages, num_stages)
         db = zeros(T, num_stages)
+        delta = rand(T)
+        weights = rand(T, length(ev.inv_gamma))
 
         l1_cost = RKCostL1{T}()
         l2_cost = RKCostL2{T}()
         linf_cost = RKCostLInfinity{T}()
-        huber_cost = RKCostHuber{T}(one(T))
+        huber_cost = RKCostHuber{T}(delta)
 
-        weights = rand(T, length(ev.inv_gamma))
         weighted_l1_cost = RKCostWeightedL1{T}(weights)
         weighted_l2_cost = RKCostWeightedL2{T}(weights)
         weighted_linf_cost = RKCostWeightedLInfinity{T}(weights)
-        weighted_huber_cost = RKCostWeightedHuber{T}(one(T), weights)
+        weighted_huber_cost = RKCostWeightedHuber{T}(delta, weights)
 
-        for cost in [l1_cost, l2_cost, weighted_l1_cost, weighted_l2_cost]
+        for cost in [
+            l1_cost, l2_cost, weighted_l1_cost, weighted_l2_cost,
+            huber_cost, weighted_huber_cost]
 
             if isbitstype(T)
                 test_gradient_allocs(ev, gA, gb, cost, A, b)
