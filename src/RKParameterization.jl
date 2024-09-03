@@ -99,7 +99,7 @@ end
 export RKParameterizationExplicitQR
 
 
-struct RKParameterizationExplicitQR{T} <: AbstractRKParameterization{T}
+struct RKParameterizationExplicitQR{T} <: AbstractRKParameterizationQR{T}
 
     num_stages::Int
     num_variables::Int
@@ -262,7 +262,7 @@ export RKParameterizationDiagonallyImplicitQR
 
 
 struct RKParameterizationDiagonallyImplicitQR{T} <:
-       AbstractRKParameterization{T}
+       AbstractRKParameterizationQR{T}
 
     num_stages::Int
     num_variables::Int
@@ -419,7 +419,7 @@ end
 export RKParameterizationImplicitQR
 
 
-struct RKParameterizationImplicitQR{T} <: AbstractRKParameterization{T}
+struct RKParameterizationImplicitQR{T} <: AbstractRKParameterizationQR{T}
 
     num_stages::Int
     num_variables::Int

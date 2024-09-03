@@ -10,11 +10,14 @@ include("ButcherInstructions.jl")
 
 const PERFORM_INTERNAL_BOUNDS_CHECKS = true
 abstract type AbstractRKParameterization{T} end
+abstract type AbstractRKParameterizationQR{T} end
 include("RKParameterization.jl")
 
 
 abstract type AbstractRKOCEvaluator{T} end
+abstract type AbstractRKOCEvaluatorQR{T} end
 abstract type AbstractRKOCAdjoint{T} end
+abstract type AbstractRKOCAdjointQR{T} end
 abstract type AbstractRKCost{T} end
 function get_axes end
 function compute_residual end
@@ -42,7 +45,7 @@ struct RKOCEvaluator{T} <: AbstractRKOCEvaluator{T}
 end
 
 
-struct RKOCEvaluatorQR{T} <: AbstractRKOCEvaluator{T}
+struct RKOCEvaluatorQR{T} <: AbstractRKOCEvaluatorQR{T}
     table::ButcherInstructionTable
     Phi::Matrix{T}
     dPhi::Matrix{T}
