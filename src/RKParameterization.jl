@@ -2,7 +2,7 @@ module RKParameterization
 
 
 using ..RungeKuttaToolKit: PERFORM_INTERNAL_BOUNDS_CHECKS,
-    AbstractRKParameterization
+    AbstractRKParameterization, AbstractRKParameterizationQR
 
 
 ####################################################################### EXPLICIT
