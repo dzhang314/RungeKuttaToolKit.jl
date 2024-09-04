@@ -55,7 +55,7 @@ end
 ######################################################### ROOTED TREE GENERATION
 
 
-using RungeKuttaToolKit.ButcherInstructions: RevLexIterator
+using RungeKuttaToolKit.ButcherInstructions: is_canonical, RevLexIterator
 
 
 @testset "rooted tree generation" begin
@@ -65,7 +65,7 @@ using RungeKuttaToolKit.ButcherInstructions: RevLexIterator
     accumulated_attach = LevelSequence[]
     accumulated_butcher = LevelSequence[]
 
-    for n = 1:MAX_ORDER
+    for n = 0:MAX_ORDER
 
         # Test rooted_trees.
 
@@ -84,10 +84,17 @@ using RungeKuttaToolKit.ButcherInstructions: RevLexIterator
         @test all(length(tree) == n for tree in trees_attach)
         @test all(length(tree) == n for tree in trees_butcher)
 
+        @test all(is_canonical, trees_lex)
+        @test all(is_canonical, trees_revlex)
+        @test all(is_canonical, trees_attach)
+        @test all(is_canonical, trees_butcher)
+
         @test length(trees_lex) == length(RevLexIterator(n))
         @test length(trees_revlex) == length(RevLexIterator(n))
         @test length(trees_attach) == length(RevLexIterator(n))
         @test length(trees_butcher) == length(RevLexIterator(n))
+
+        # Test agreement of different tree orderings.
 
         @test Set{LevelSequence}(trees_lex) == Set{LevelSequence}(trees_revlex)
         @test Set{LevelSequence}(trees_lex) == Set{LevelSequence}(trees_attach)
@@ -109,6 +116,11 @@ using RungeKuttaToolKit.ButcherInstructions: RevLexIterator
         @test all(1 <= length(tree) <= n for tree in all_trees_revlex)
         @test all(1 <= length(tree) <= n for tree in all_trees_attach)
         @test all(1 <= length(tree) <= n for tree in all_trees_butcher)
+
+        @test all(is_canonical, all_trees_lex)
+        @test all(is_canonical, all_trees_revlex)
+        @test all(is_canonical, all_trees_attach)
+        @test all(is_canonical, all_trees_butcher)
 
         @test issorted(all_trees_lex, by=length)
         @test issorted(all_trees_revlex, by=length)
