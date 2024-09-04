@@ -170,25 +170,6 @@ function canonize(s::LevelSequence)
 end
 
 
-#################################################### LEVEL SEQUENCE DICTIONARIES
-
-
-struct LevelSequenceDict
-    entries::Dict{Vector{Int},Int}
-end
-
-
-LevelSequenceDict() = LevelSequenceDict(Dict{Vector{Int},Int}())
-
-
-Base.haskey(d::LevelSequenceDict, s::LevelSequence) =
-    haskey(d.entries, s.data)
-Base.getindex(d::LevelSequenceDict, s::LevelSequence) =
-    getindex(d.entries, s.data)
-Base.setindex!(d::LevelSequenceDict, i::Int, s::LevelSequence) =
-    setindex!(d.entries, i, s.data)
-
-
 ##################################################### GENERATING LEVEL SEQUENCES
 
 
@@ -257,14 +238,13 @@ end
 
 function Base.iterate(
     iter::LevelSequenceIterator,
-    state::Tuple{Vector{Int},Vector{Int},Vector{Int},Int}
+    (L, PREV, SAVE, p)::Tuple{Vector{Int},Vector{Int},Vector{Int},Int}
 )
     # This function is based on the GENERATE-NEXT-TREE
     # algorithm from Figure 3 of the following paper:
     # CONSTANT TIME GENERATION OF ROOTED TREES
     # TERRY BEYER AND SANDRA MITCHELL HEDETNIEMI
     # SIAM J. COMPUT. Vol. 9, No. 4, November 1980
-    (L, PREV, SAVE, p) = state
     if p == 1
         return nothing
     end
@@ -306,32 +286,28 @@ all_rooted_trees(n::Int; tree_ordering::Symbol=:reverse_lexicographic) =
 ################################################## COMBINATORICS OF ROOTED TREES
 
 
-function butcher_density(tree::LevelSequence)
-    result = BigInt(length(tree))
-    for leg in extract_legs(tree)
-        result *= butcher_density(leg)
-    end
-    return result
-end
-
-
-function butcher_symmetry(tree::LevelSequence)
-    @assert is_canonical(tree)
-    leg_counts = LevelSequenceDict()
-    for leg in extract_legs(tree)
-        if haskey(leg_counts, leg)
-            leg_counts[leg] += 1
+function counts(items::AbstractVector{T}) where {T}
+    result = Dict{T,Int}()
+    for item in items
+        if haskey(result, item)
+            result[item] += 1
         else
-            leg_counts[leg] = 1
+            result[item] = 1
         end
     end
-    result = BigInt(1)
-    for (data, count) in leg_counts.entries
-        leg_symmetry = butcher_symmetry(LevelSequence(data))
-        result *= leg_symmetry * factorial(BigInt(count))
-    end
     return result
 end
+
+
+butcher_density(tree::LevelSequence) = reduce(*,
+    butcher_density(leg) for leg in extract_legs(tree);
+    init=BigInt(length(tree)))
+
+
+butcher_symmetry(tree::LevelSequence) = reduce(*,
+    butcher_symmetry(leg) * factorial(BigInt(count))
+    for (leg, count) in counts(extract_legs(canonize(tree)));
+    init=BigInt(1))
 
 
 ########################################################### BUTCHER INSTRUCTIONS
@@ -350,7 +326,7 @@ depth(instruction::ButcherInstruction) = instruction.depth
 
 function find_butcher_instruction(
     instructions::Vector{ButcherInstruction},
-    indices::LevelSequenceDict, tree::LevelSequence
+    indices::Dict{LevelSequence,Int}, tree::LevelSequence
 )
     legs = extract_legs(tree)
     if isempty(legs)
@@ -398,7 +374,7 @@ end
 
 function push_butcher_instructions!(
     instructions::Vector{ButcherInstruction},
-    indices::LevelSequenceDict, tree::LevelSequence
+    indices::Dict{LevelSequence,Int}, tree::LevelSequence
 )
     @assert !haskey(indices, tree)
     instruction = find_butcher_instruction(instructions, indices, tree)
@@ -440,7 +416,7 @@ permute_butcher_instruction(
 
 
 function push_necessary_subtrees!(
-    result::LevelSequenceDict, tree::LevelSequence
+    result::Dict{LevelSequence,Int}, tree::LevelSequence
 )
     result[tree] = 0
     legs = extract_legs(tree)
@@ -470,12 +446,12 @@ end
 
 
 function necessary_subtrees(trees::Vector{LevelSequence})
-    result = LevelSequenceDict()
+    result = Dict{LevelSequence,Int}()
     for tree in trees
         result[tree] = 0
         push_necessary_subtrees!(result, tree)
     end
-    return sort!(LevelSequence.(keys(result.entries)); lt=grevlex_order)
+    return sort!(collect(keys(result)); lt=grevlex_order)
 end
 
 
@@ -486,7 +462,7 @@ function build_instructions(
 )
     @assert allunique(trees)
     instructions = ButcherInstruction[]
-    indices = LevelSequenceDict()
+    indices = Dict{LevelSequence,Int}()
     for tree in (optimize ? necessary_subtrees(trees) : trees)
         push_butcher_instructions!(instructions, indices, tree)
     end
@@ -648,7 +624,7 @@ svg_string(line::Line, color::String, width::Float64) = @sprintf(
     color, width)
 
 
-function tree_width!(widths::LevelSequenceDict, tree::LevelSequence)
+function tree_width!(widths::Dict{LevelSequence,Int}, tree::LevelSequence)
     if haskey(widths, tree)
         return widths[tree]
     else
@@ -668,7 +644,7 @@ end
 function tree_diagram!(
     circles::Vector{Circle},
     lines::Vector{Line},
-    widths::LevelSequenceDict,
+    widths::Dict{LevelSequence,Int},
     tree::LevelSequence,
     x::Float64,
     y::Float64,
@@ -695,7 +671,7 @@ end
 
 
 tree_diagram(tree::LevelSequence, radius::Float64, spacing::Float64) =
-    tree_diagram!(Circle[], Line[], LevelSequenceDict(),
+    tree_diagram!(Circle[], Line[], Dict{LevelSequence,Int}(),
         tree, 0.0, 0.0, radius, spacing)
 
 
