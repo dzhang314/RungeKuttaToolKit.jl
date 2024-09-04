@@ -22,27 +22,30 @@ end
 
 
 function Base.iterate(iter::BipartitionIterator{T}) where {T}
-    n = length(iter.items)
-    return (n < 2) ? nothing : (
-        ((T[@inbounds iter.items[1]], @inbounds iter.items[2:n])),
-        (one(UInt) << (n - 1)) - 1)
+    @inbounds begin
+        n = length(iter.items)
+        return (n < 2) ? nothing : (
+            ((T[iter.items[1]], iter.items[2:n])),
+            (one(UInt) << (n - 1)) - 1)
+    end
 end
 
 
 function Base.iterate(iter::BipartitionIterator{T}, state::UInt) where {T}
-    if state < 2
-        return nothing
+    @inbounds begin
+        if state < 2
+            return nothing
+        end
+        state -= 1
+        next_state = state
+        left = T[iter.items[1]]
+        right = T[]
+        for i = 2:length(iter.items)
+            push!(ifelse(iszero(state & 1), left, right), iter.items[i])
+            state >>= 1
+        end
+        return ((left, right), next_state)
     end
-    n = length(iter.items)
-    state -= 1
-    next_state = state
-    left = T[@inbounds iter.items[1]]
-    right = T[]
-    @inbounds for i = 2:n
-        push!(ifelse(iszero(state & 1), left, right), iter.items[i])
-        state >>= 1
-    end
-    return ((left, right), next_state)
 end
 
 
@@ -54,119 +57,106 @@ struct LevelSequence
 end
 
 
-@inline Base.length(s::LevelSequence) = length(s.data)
-@inline Base.isempty(s::LevelSequence) = isempty(s.data)
-@inline Base.getindex(s::LevelSequence, i::Int) = s.data[i]
-@inline Base.getindex(s::LevelSequence, r::AbstractRange) =
-    LevelSequence(s.data[r])
-@inline Base.copy(s::LevelSequence) = LevelSequence(copy(s.data))
-
+@inline Base.length(tree::LevelSequence) = length(tree.data)
+@inline Base.getindex(tree::LevelSequence, i::Int) = tree.data[i]
+@inline Base.getindex(tree::LevelSequence, r::AbstractRange) =
+    LevelSequence(tree.data[r])
+@inline Base.copy(tree::LevelSequence) = LevelSequence(copy(tree.data))
+@inline Base.hash(tree::LevelSequence, h::UInt) = hash(tree.data, h)
 @inline Base.:(==)(s::LevelSequence, t::LevelSequence) = (s.data == t.data)
-@inline Base.hash(s::LevelSequence, h::UInt) = hash(s.data, h)
-@inline Base.isless(s::LevelSequence, t::LevelSequence) =
-    isless(s.data, t.data)
+@inline Base.isless(s::LevelSequence, t::LevelSequence) = (s.data < t.data)
 
 
-function decrement!(s::LevelSequence)
-    @simd ivdep for i = 1:length(s)
-        @inbounds s.data[i] -= 1
-    end
-    return s
-end
+###################################################### COMBINING LEVEL SEQUENCES
 
 
-function increment!(s::LevelSequence)
-    @simd ivdep for i = 1:length(s)
-        @inbounds s.data[i] += 1
-    end
-    return s
-end
-
-
-function count_legs(s::LevelSequence)
-    n = length(s)
-    @assert n > 0
+function butcher_bracket(trees::Vector{LevelSequence})
     @inbounds begin
-        @assert isone(s[1])
-        result = 0
-        for i = 2:n
-            result += (s[i] == 2)
+        result = Vector{Int}(undef, sum(length, trees) + 1)
+        result[1] = 1
+        k = 1
+        for tree in trees
+            @simd ivdep for i = 1:length(tree)
+                result[k+i] = tree[i] + 1
+            end
+            k += length(tree)
         end
-        return result
+        return LevelSequence(result)
     end
 end
 
 
-function extract_legs(s::LevelSequence)
-    n = length(s)
-    @assert n > 0
+###################################################### SPLITTING LEVEL SEQUENCES
+
+
+@inline count_legs(tree::LevelSequence) = count(==(2), tree.data)
+
+
+@inline function extract_leg(tree::LevelSequence, i::Int, j::Int)
     @inbounds begin
-        @assert s[1] == 1
-        result = Vector{LevelSequence}(undef, count_legs(s))
-        if n > 1
-            i = 1
-            last = 2
+        result = Vector{Int}(undef, j - i + 1)
+        @simd ivdep for k = i:j
+            result[k-i+1] = tree[k] - 1
+        end
+        return LevelSequence(result)
+    end
+end
+
+
+function extract_legs(tree::LevelSequence)
+    @inbounds begin
+        n = length(tree)
+        num_legs = count_legs(tree)
+        result = Vector{LevelSequence}(undef, num_legs)
+        if iszero(num_legs)
+            @assert n == 1
+            @assert tree[1] == 1
+        else
+            @assert n > 1
+            @assert tree[1] == 1
+            @assert tree[2] == 2
+            k = 0
+            i = 2
             for j = 3:n
-                if s[j] == 2
-                    result[i] = decrement!(s[last:j-1])
-                    i += 1
-                    last = j
+                if tree[j] == 2
+                    result[k+=1] = extract_leg(tree, i, j - 1)
+                    i = j
                 end
             end
-            result[i] = decrement!(s[last:n])
+            result[k+=1] = extract_leg(tree, i, n)
         end
         return result
     end
 end
 
 
-function is_canonical(s::LevelSequence)
-    legs = extract_legs(s)
-    if !issorted(legs; rev=true)
-        return false
-    end
-    for leg in legs
-        if !is_canonical(leg)
-            return false
-        end
-    end
-    return true
+###################################################### ANALYZING LEVEL SEQUENCES
+
+
+# @inbounds not necessary; bounds check elided.
+@inline is_valid(tree::LevelSequence) =
+    !isempty(tree.data) && tree[1] == 1 && all(
+        2 <= tree[i] <= tree[i-1] + 1 for i = 2:length(tree))
+
+
+function is_canonical(tree::LevelSequence)
+    @assert is_valid(tree)
+    legs = extract_legs(tree)
+    return issorted(legs; rev=true) && all(is_canonical, legs)
 end
 
 
-function is_tall(s::LevelSequence)
-    @inbounds for i = 1:length(s)
-        if s[i] != i
-            return false
-        end
-    end
-    return true
-end
+# @inbounds not necessary; bounds check elided.
+@inline is_tall(tree::LevelSequence) = all(
+    tree[i] == i for i = 1:length(tree))
+@inline is_bushy(tree::LevelSequence) = all(
+    tree[i] == min(i, 2) for i = 1:length(tree))
 
 
-function is_bushy(s::LevelSequence)
-    @assert !isempty(s)
-    @assert isone(s[1])
-    @inbounds for i = 2:length(s)
-        if s[i] != 2
-            return false
-        end
-    end
-    return true
-end
-
-
-function canonize(s::LevelSequence)
-    if is_tall(s) || is_bushy(s)
-        return copy(s)
-    end
-    result = [1]
-    for leg in sort!([canonize(leg) for leg in extract_legs(tree)]; rev=true)
-        for vertex in leg
-            push!(result, vertex + 1)
-        end
-    end
-    return LevelSequence(result)
+function canonize(tree::LevelSequence)
+    @assert is_valid(tree)
+    return (is_tall(tree) || is_bushy(tree)) ? copy(tree) : butcher_bracket(
+        sort!([canonize(leg) for leg in extract_legs(tree)]; rev=true))
 end
 
 
@@ -192,13 +182,13 @@ function Base.length(iter::LevelSequenceIterator)
             for i = 2:n
                 result = 0
                 for j = 1:i-1
-                    accumulator = 0
+                    acc = 0
                     for d = 1:j
                         if j % d == 0
-                            accumulator += d * x[d]
+                            acc += d * x[d]
                         end
                     end
-                    result += accumulator * x[i-j]
+                    result += acc * x[i-j]
                 end
                 x[i] = div(result, i - 1)
             end
