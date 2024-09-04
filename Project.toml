@@ -5,6 +5,7 @@ version = "2.0.0"
 
 [deps]
 MultiFloats = "bdf0d083-296b-4888-a5b6-7498122e68a5"
+Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
 
 [compat]
 MultiFloats = "2.0"

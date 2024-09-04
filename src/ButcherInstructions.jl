@@ -1,6 +1,7 @@
 module ButcherInstructions
 
 
+using Printf
 using ..RungeKuttaToolKit: NULL_INDEX
 
 
@@ -536,6 +537,167 @@ function ButcherInstructionTable(
     return ButcherInstructionTable(
         instructions, selected_indices, source_indices,
         extension_indices, rooted_sum_indices, rooted_sum_ranges)
+end
+
+
+############################################################### GRAPHICAL OUTPUT
+
+
+svg_string(x::Float64) = rstrip(rstrip(@sprintf("%.15f", x), '0'), '.')
+
+
+function svg_string(
+    x_min::Float64,
+    x_max::Float64,
+    y_min::Float64,
+    y_max::Float64,
+)
+    width_string = svg_string(x_max - x_min)
+    height_string = svg_string(y_max - y_min)
+    return @sprintf(
+        """\
+        <svg xmlns="http://www.w3.org/2000/svg" \
+        width="%s" height="%s" viewBox="%s %s %s %s">\
+        """,
+        width_string, height_string,
+        svg_string(x_min), svg_string(y_min),
+        width_string, height_string)
+end
+
+
+struct Circle
+    cx::Float64
+    cy::Float64
+    r::Float64
+end
+
+
+min_x(circle::Circle) = circle.cx - circle.r
+min_y(circle::Circle) = circle.cy - circle.r
+max_x(circle::Circle) = circle.cx + circle.r
+max_y(circle::Circle) = circle.cy + circle.r
+
+
+svg_string(circle::Circle, color::String) = @sprintf(
+    "<circle cx=\"%s\" cy=\"%s\" r=\"%s\" stroke=\"%s\" />",
+    svg_string(circle.cx), svg_string(circle.cy),
+    svg_string(circle.r), color)
+
+
+struct Line
+    x1::Float64
+    y1::Float64
+    x2::Float64
+    y2::Float64
+end
+
+
+min_x(line::Line) = min(line.x1, line.x2)
+min_y(line::Line) = min(line.y1, line.y2)
+max_x(line::Line) = max(line.x1, line.x2)
+max_y(line::Line) = max(line.y1, line.y2)
+
+
+svg_string(line::Line, color::String, width::Float64) = @sprintf(
+    """\
+    <line x1="%s" y1="%s" x2="%s" y2="%s" \
+    stroke="%s" stroke-width="%s" />\
+    """,
+    svg_string(line.x1), svg_string(line.y1),
+    svg_string(line.x2), svg_string(line.y2),
+    color, width)
+
+
+function tree_width!(widths::LevelSequenceDict, tree::LevelSequence)
+    if haskey(widths, tree)
+        return widths[tree]
+    else
+        legs = extract_legs(tree)
+        if isempty(legs)
+            return 0
+        else
+            result = sum(tree_width!(widths, leg)
+                         for leg in legs) + (length(legs) - 1)
+            widths[tree] = result
+            return result
+        end
+    end
+end
+
+
+function tree_diagram!(
+    circles::Vector{Circle},
+    lines::Vector{Line},
+    widths::LevelSequenceDict,
+    tree::LevelSequence,
+    x::Float64,
+    y::Float64,
+    radius::Float64,
+    spacing::Float64,
+)
+    push!(circles, Circle(x, y, radius))
+    legs = extract_legs(tree)
+    if !isempty(legs)
+        total_width = tree_width!(widths, tree) * spacing
+        leg_x = x - 0.5 * total_width
+        leg_y = y - spacing
+        for leg in legs
+            leg_width = tree_width!(widths, leg) * spacing
+            leg_x += 0.5 * leg_width
+            push!(lines, Line(x, y, leg_x, leg_y))
+            tree_diagram!(circles, lines, widths, leg,
+                leg_x, leg_y, radius, spacing)
+            leg_x += 0.5 * leg_width + spacing
+        end
+    end
+    return (circles, lines)
+end
+
+
+tree_diagram(tree::LevelSequence, radius::Float64, spacing::Float64) =
+    tree_diagram!(Circle[], Line[], LevelSequenceDict(),
+        tree, 0.0, 0.0, radius, spacing)
+
+
+function svg_string(
+    tree::LevelSequence,
+    radius::Float64,
+    spacing::Float64,
+    line_width::Float64,
+)
+    circles, lines = tree_diagram(tree, radius, spacing)
+    io = IOBuffer()
+    println(io, svg_string(
+        minimum(min_x, circles) - 0.5 * spacing,
+        maximum(max_x, circles) + 0.5 * spacing,
+        minimum(min_y, circles) - 0.5 * spacing,
+        maximum(max_y, circles) + 0.5 * spacing))
+    for line in lines
+        println(io, svg_string(line, "white", line_width + 1.0))
+        println(io, svg_string(line, "black", line_width - 1.0))
+    end
+    for circle in circles
+        println(io, svg_string(circle, "white"))
+    end
+    print(io, "</svg>")
+    return String(take!(io))
+end
+
+
+function Base.show(io::IO, ::MIME"text/html", tree::LevelSequence)
+    println(io, "<div>")
+    println(io, svg_string(tree, 7.0, 25.0, 4.0))
+    println(io, "</div>")
+end
+
+
+function Base.show(io::IO, ::MIME"text/html",
+    trees::AbstractVector{LevelSequence})
+    println(io, "<div>")
+    for tree in trees
+        println(io, svg_string(tree, 7.0, 25.0, 4.0))
+    end
+    println(io, "</div>")
 end
 
 
