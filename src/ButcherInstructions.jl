@@ -112,6 +112,10 @@ end
 ###################################################### COMBINING LEVEL SEQUENCES
 
 
+butcher_product(s::LevelSequence, t::LevelSequence) =
+    LevelSequence(append!(copy(s.data), v + 1 for v in t.data))
+
+
 function butcher_bracket(trees::Vector{LevelSequence})
     @inbounds begin
         result = Vector{Int}(undef, sum(length, trees) + 1)
@@ -175,6 +179,9 @@ function attach_leaf_right(tree::LevelSequence, index::Int)
 end
 
 
+##################################################### GENERATING LEVEL SEQUENCES
+
+
 function generate_rooted_trees(n::Int; cumulative::Bool)
     if n <= 0
         return LevelSequence[]
@@ -203,7 +210,39 @@ function generate_rooted_trees(n::Int; cumulative::Bool)
 end
 
 
-##################################################### GENERATING LEVEL SEQUENCES
+function generate_butcher_trees(n::Int; cumulative::Bool)
+    if n <= 0
+        return LevelSequence[]
+    end
+    @inbounds begin
+        ranges = Vector{UnitRange{Int}}(undef, n)
+        factors = [(NULL_INDEX, NULL_INDEX)]
+        ranges[1] = 1:1
+        for i = 2:n
+            start = length(factors) + 1
+            for j = 1:i-1
+                for r in ranges[j]
+                    for l in ranges[i-j]
+                        if l == 1 || r <= factors[l][2]
+                            push!(factors, (l, r))
+                        end
+                    end
+                end
+            end
+            ranges[i] = start:length(factors)
+        end
+        trees = Vector{LevelSequence}(undef, length(factors))
+        trees[1] = LevelSequence([1])
+        for i = 2:length(factors)
+            left, right = factors[i]
+            trees[i] = canonize(butcher_product(trees[left], trees[right]))
+        end
+        return cumulative ? trees : trees[ranges[n]]
+    end
+end
+
+
+######################################################## LEVEL SEQUENCE ITERATOR
 
 
 struct RevLexIterator
@@ -312,10 +351,13 @@ function rooted_trees(n::Int; tree_ordering::Symbol=:reverse_lexicographic)
         return reverse!(collect(RevLexIterator(n)))
     elseif tree_ordering == :attach
         return generate_rooted_trees(n; cumulative=false)
+    elseif tree_ordering == :butcher
+        return generate_butcher_trees(n; cumulative=false)
     else
         throw(ArgumentError(
             "Unknown tree_ordering $tree_ordering " *
-            "(expected :attach, :lexicographic, or :reverse_lexicographic)"))
+            "(expected :attach, :butcher, " *
+            ":lexicographic, or :reverse_lexicographic)"))
     end
 end
 
@@ -329,10 +371,13 @@ function all_rooted_trees(n::Int; tree_ordering::Symbol=:reverse_lexicographic)
             init=LevelSequence[])
     elseif tree_ordering == :attach
         return generate_rooted_trees(n; cumulative=true)
+    elseif tree_ordering == :butcher
+        return generate_butcher_trees(n; cumulative=true)
     else
         throw(ArgumentError(
             "Unknown tree_ordering $tree_ordering " *
-            "(expected :attach, :lexicographic, or :reverse_lexicographic)"))
+            "(expected :attach, :butcher, " *
+            ":lexicographic, or :reverse_lexicographic)"))
     end
 end
 
