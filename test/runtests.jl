@@ -52,6 +52,54 @@ function maximum_relative_difference(
 end
 
 
+######################################################### ROOTED TREE GENERATION
+
+
+using RungeKuttaToolKit.ButcherInstructions: RevLexIterator
+
+
+@testset "rooted tree generation" begin
+    accumulated_lex = LevelSequence[]
+    accumulated_revlex = LevelSequence[]
+    accumulated_attach = LevelSequence[]
+    for n = 1:MAX_ORDER
+        trees_lex = rooted_trees(n; tree_ordering=:lexicographic)
+        trees_revlex = rooted_trees(n; tree_ordering=:reverse_lexicographic)
+        trees_attach = rooted_trees(n; tree_ordering=:attach)
+        @test length(trees_lex) == length(RevLexIterator(n))
+        @test length(trees_revlex) == length(RevLexIterator(n))
+        @test length(trees_attach) == length(RevLexIterator(n))
+        @test all(length(tree) == n for tree in trees_lex)
+        @test all(length(tree) == n for tree in trees_revlex)
+        @test all(length(tree) == n for tree in trees_attach)
+        @test allunique(trees_lex)
+        @test allunique(trees_revlex)
+        @test allunique(trees_attach)
+        @test Set{LevelSequence}(trees_lex) == Set{LevelSequence}(trees_revlex)
+        @test Set{LevelSequence}(trees_lex) == Set{LevelSequence}(trees_attach)
+        @test Set{LevelSequence}(trees_revlex) == Set{LevelSequence}(trees_attach)
+        append!(accumulated_lex, trees_lex)
+        append!(accumulated_revlex, trees_revlex)
+        append!(accumulated_attach, trees_attach)
+        all_trees_lex = all_rooted_trees(n; tree_ordering=:lexicographic)
+        all_trees_revlex = all_rooted_trees(n; tree_ordering=:reverse_lexicographic)
+        all_trees_attach = all_rooted_trees(n; tree_ordering=:attach)
+        @test accumulated_lex == all_trees_lex
+        @test accumulated_revlex == all_trees_revlex
+        @test accumulated_attach == all_trees_attach
+        @test issorted(all_trees_lex, by=length)
+        @test issorted(all_trees_revlex, by=length)
+        @test issorted(all_trees_attach, by=length)
+        @test all(1 <= length(tree) <= n for tree in all_trees_lex)
+        @test all(1 <= length(tree) <= n for tree in all_trees_revlex)
+        @test all(1 <= length(tree) <= n for tree in all_trees_attach)
+        @test allunique(all_trees_lex)
+        @test allunique(all_trees_revlex)
+        @test allunique(all_trees_attach)
+    end
+end
+
+
 ###################################################### ROOTED TREE COMBINATORICS
 
 

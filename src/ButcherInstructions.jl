@@ -128,23 +128,6 @@ function butcher_bracket(trees::Vector{LevelSequence})
 end
 
 
-###################################################### MODIFYING LEVEL SEQUENCES
-
-
-attach_leaf_left(tree::LevelSequence, index::Int) =
-    LevelSequence(insert!(copy(tree.data), index + 1, tree[index] + 1))
-
-
-function attach_leaf_right(tree::LevelSequence, index::Int)
-    value = tree[index] + 1
-    next = index + 1
-    while next <= length(tree) && tree[next] >= value
-        next += 1
-    end
-    return LevelSequence(insert!(copy(tree.data), next, value))
-end
-
-
 ###################################################### ANALYZING LEVEL SEQUENCES
 
 
@@ -172,6 +155,51 @@ function canonize(tree::LevelSequence)
     @assert is_valid(tree)
     return (is_tall(tree) || is_bushy(tree)) ? copy(tree) : butcher_bracket(
         sort!([canonize(leg) for leg in extract_legs(tree)]; rev=true))
+end
+
+
+###################################################### MODIFYING LEVEL SEQUENCES
+
+
+attach_leaf_left(tree::LevelSequence, index::Int) =
+    LevelSequence(insert!(copy(tree.data), index + 1, tree[index] + 1))
+
+
+function attach_leaf_right(tree::LevelSequence, index::Int)
+    value = tree[index] + 1
+    next = index + 1
+    while next <= length(tree) && tree[next] >= value
+        next += 1
+    end
+    return LevelSequence(insert!(copy(tree.data), next, value))
+end
+
+
+function generate_rooted_trees(n::Int; cumulative::Bool)
+    if n <= 0
+        return LevelSequence[]
+    end
+    result = frontier = [LevelSequence([1])]
+    for _ = 2:n
+        next = LevelSequence[]
+        seen = Set{LevelSequence}()
+        for tree in frontier
+            for i = 1:length(tree)
+                new_tree = canonize(attach_leaf_left(tree, i))
+                if !(new_tree in seen)
+                    push!(next, new_tree)
+                    push!(seen, new_tree)
+                end
+            end
+        end
+        if cumulative
+            append!(result, next)
+        else
+            result = next
+        end
+        frontier = next
+    end
+    return result
 end
 
 
@@ -243,7 +271,7 @@ end
 
 function Base.iterate(
     iter::RevLexIterator,
-    (L, PREV, SAVE, p)::Tuple{Vector{Int},Vector{Int},Vector{Int},Int}
+    (L, PREV, SAVE, p)::Tuple{Vector{Int},Vector{Int},Vector{Int},Int},
 )
     # This function is based on the GENERATE-NEXT-TREE
     # algorithm from Figure 3 of the following paper:
@@ -274,18 +302,39 @@ function Base.iterate(
 end
 
 
+########################################################## ROOTED TREE INTERFACE
+
+
 function rooted_trees(n::Int; tree_ordering::Symbol=:reverse_lexicographic)
-    if tree_ordering == :lexicographic
-        return reverse!(collect(RevLexIterator(n)))
-    else
+    if tree_ordering == :reverse_lexicographic
         return collect(RevLexIterator(n))
+    elseif tree_ordering == :lexicographic
+        return reverse!(collect(RevLexIterator(n)))
+    elseif tree_ordering == :attach
+        return generate_rooted_trees(n; cumulative=false)
+    else
+        throw(ArgumentError(
+            "Unknown tree_ordering $tree_ordering " *
+            "(expected :attach, :lexicographic, or :reverse_lexicographic)"))
     end
 end
 
 
-all_rooted_trees(n::Int; tree_ordering::Symbol=:reverse_lexicographic) =
-    reduce(vcat, rooted_trees(i; tree_ordering=tree_ordering) for i = 1:n;
-        init=LevelSequence[])
+function all_rooted_trees(n::Int; tree_ordering::Symbol=:reverse_lexicographic)
+    if tree_ordering == :reverse_lexicographic
+        return reduce(vcat, collect(RevLexIterator(i)) for i = 1:n;
+            init=LevelSequence[])
+    elseif tree_ordering == :lexicographic
+        return reduce(vcat, reverse!(collect(RevLexIterator(i))) for i = 1:n;
+            init=LevelSequence[])
+    elseif tree_ordering == :attach
+        return generate_rooted_trees(n; cumulative=true)
+    else
+        throw(ArgumentError(
+            "Unknown tree_ordering $tree_ordering " *
+            "(expected :attach, :lexicographic, or :reverse_lexicographic)"))
+    end
+end
 
 
 ################################################## COMBINATORICS OF ROOTED TREES
@@ -326,7 +375,7 @@ struct ButcherInstruction
 end
 
 
-depth(instruction::ButcherInstruction) = instruction.depth
+depth(insn::ButcherInstruction) = insn.depth
 
 
 function find_butcher_instruction(
