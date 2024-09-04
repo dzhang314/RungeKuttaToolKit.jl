@@ -18,13 +18,13 @@ end
 
 
 @inline Base.length(iter::BipartitionIterator{T}) where {T} =
-    isempty(iter.items) ? 0 : ((1 << (length(iter.items) - 1)) - 1)
+    isempty(iter.items) ? 0 : (1 << (length(iter.items) - 1)) - 1
 
 
 function Base.iterate(iter::BipartitionIterator{T}) where {T}
     @inbounds begin
         n = length(iter.items)
-        return (n < 2) ? nothing : (
+        return n < 2 ? nothing : (
             ((T[iter.items[1]], iter.items[2:n])),
             (one(UInt) << (n - 1)) - 1)
     end
@@ -59,31 +59,10 @@ end
 
 @inline Base.length(tree::LevelSequence) = length(tree.data)
 @inline Base.getindex(tree::LevelSequence, i::Int) = tree.data[i]
-@inline Base.getindex(tree::LevelSequence, r::AbstractRange) =
-    LevelSequence(tree.data[r])
 @inline Base.copy(tree::LevelSequence) = LevelSequence(copy(tree.data))
 @inline Base.hash(tree::LevelSequence, h::UInt) = hash(tree.data, h)
 @inline Base.:(==)(s::LevelSequence, t::LevelSequence) = (s.data == t.data)
 @inline Base.isless(s::LevelSequence, t::LevelSequence) = (s.data < t.data)
-
-
-###################################################### COMBINING LEVEL SEQUENCES
-
-
-function butcher_bracket(trees::Vector{LevelSequence})
-    @inbounds begin
-        result = Vector{Int}(undef, sum(length, trees) + 1)
-        result[1] = 1
-        k = 1
-        for tree in trees
-            @simd ivdep for i = 1:length(tree)
-                result[k+i] = tree[i] + 1
-            end
-            k += length(tree)
-        end
-        return LevelSequence(result)
-    end
-end
 
 
 ###################################################### SPLITTING LEVEL SEQUENCES
@@ -130,6 +109,42 @@ function extract_legs(tree::LevelSequence)
 end
 
 
+###################################################### COMBINING LEVEL SEQUENCES
+
+
+function butcher_bracket(trees::Vector{LevelSequence})
+    @inbounds begin
+        result = Vector{Int}(undef, sum(length, trees) + 1)
+        result[1] = 1
+        k = 1
+        for tree in trees
+            @simd ivdep for i = 1:length(tree)
+                result[k+i] = tree[i] + 1
+            end
+            k += length(tree)
+        end
+        return LevelSequence(result)
+    end
+end
+
+
+###################################################### MODIFYING LEVEL SEQUENCES
+
+
+attach_leaf_left(tree::LevelSequence, index::Int) =
+    LevelSequence(insert!(copy(tree.data), index + 1, tree[index] + 1))
+
+
+function attach_leaf_right(tree::LevelSequence, index::Int)
+    value = tree[index] + 1
+    next = index + 1
+    while next <= length(tree) && tree[next] >= value
+        next += 1
+    end
+    return LevelSequence(insert!(copy(tree.data), next, value))
+end
+
+
 ###################################################### ANALYZING LEVEL SEQUENCES
 
 
@@ -163,15 +178,15 @@ end
 ##################################################### GENERATING LEVEL SEQUENCES
 
 
-struct LevelSequenceIterator
+struct RevLexIterator
     n::Int
 end
 
 
-Base.eltype(::Type{LevelSequenceIterator}) = LevelSequence
+Base.eltype(::Type{RevLexIterator}) = LevelSequence
 
 
-function Base.length(iter::LevelSequenceIterator)
+function Base.length(iter::RevLexIterator)
     n = iter.n
     if n <= 0
         return 0
@@ -198,7 +213,7 @@ function Base.length(iter::LevelSequenceIterator)
 end
 
 
-function Base.iterate(iter::LevelSequenceIterator)
+function Base.iterate(iter::RevLexIterator)
     # This function is based on the GENERATE-FIRST-TREE
     # algorithm from Figure 3 of the following paper:
     # CONSTANT TIME GENERATION OF ROOTED TREES
@@ -227,7 +242,7 @@ end
 
 
 function Base.iterate(
-    iter::LevelSequenceIterator,
+    iter::RevLexIterator,
     (L, PREV, SAVE, p)::Tuple{Vector{Int},Vector{Int},Vector{Int},Int}
 )
     # This function is based on the GENERATE-NEXT-TREE
@@ -261,9 +276,9 @@ end
 
 function rooted_trees(n::Int; tree_ordering::Symbol=:reverse_lexicographic)
     if tree_ordering == :lexicographic
-        return reverse!(collect(LevelSequenceIterator(n)))
+        return reverse!(collect(RevLexIterator(n)))
     else
-        return collect(LevelSequenceIterator(n))
+        return collect(RevLexIterator(n))
     end
 end
 
@@ -295,7 +310,7 @@ butcher_density(tree::LevelSequence) = reduce(*,
 
 
 butcher_symmetry(tree::LevelSequence) = reduce(*,
-    butcher_symmetry(leg) * factorial(BigInt(count))
+    butcher_symmetry(leg)^count * factorial(BigInt(count))
     for (leg, count) in counts(extract_legs(canonize(tree)));
     init=BigInt(1))
 
@@ -316,7 +331,8 @@ depth(instruction::ButcherInstruction) = instruction.depth
 
 function find_butcher_instruction(
     instructions::Vector{ButcherInstruction},
-    indices::Dict{LevelSequence,Int}, tree::LevelSequence
+    indices::Dict{LevelSequence,Int},
+    tree::LevelSequence,
 )
     legs = extract_legs(tree)
     if isempty(legs)
@@ -333,15 +349,13 @@ function find_butcher_instruction(
         end
     else
         candidates = ButcherInstruction[]
-        for (left, right) in BipartitionIterator(legs)
-            left_leg = LevelSequence(reduce(vcat,
-                (leg.data .+ 1 for leg in left); init=[1]))
-            if haskey(indices, left_leg)
-                right_leg = LevelSequence(reduce(vcat,
-                    (leg.data .+ 1 for leg in right); init=[1]))
-                if haskey(indices, right_leg)
-                    left_index = indices[left_leg]
-                    right_index = indices[right_leg]
+        for (left_legs, right_legs) in BipartitionIterator(legs)
+            left_tree = butcher_bracket(left_legs)
+            if haskey(indices, left_tree)
+                right_tree = butcher_bracket(right_legs)
+                if haskey(indices, right_tree)
+                    left_index = indices[left_tree]
+                    right_index = indices[right_tree]
                     left_instruction = instructions[left_index]
                     right_instruction = instructions[right_index]
                     depth = 1 + max(
@@ -397,12 +411,11 @@ function push_butcher_instructions!(
 end
 
 
-permute_butcher_instruction(
-    insn::ButcherInstruction, perm::Vector{Int}
-) = ButcherInstruction(
-    (insn.left == NULL_INDEX) ? NULL_INDEX : perm[insn.left],
-    (insn.right == NULL_INDEX) ? NULL_INDEX : perm[insn.right],
-    insn.depth, insn.deficit)
+permute_butcher_instruction(insn::ButcherInstruction, perm::Vector{Int}) =
+    ButcherInstruction(
+        insn.left == NULL_INDEX ? NULL_INDEX : perm[insn.left],
+        insn.right == NULL_INDEX ? NULL_INDEX : perm[insn.right],
+        insn.depth, insn.deficit)
 
 
 function push_necessary_subtrees!(

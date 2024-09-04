@@ -52,6 +52,42 @@ function maximum_relative_difference(
 end
 
 
+###################################################### ROOTED TREE COMBINATORICS
+
+
+using RungeKuttaToolKit.ButcherInstructions:
+    attach_leaf_left, attach_leaf_right, is_canonical, canonize, counts
+
+
+@testset "rooted tree combinatorics" begin
+    let
+        left = [LevelSequence([1])]
+        right = [LevelSequence([1])]
+        for order = 2:MAX_ORDER
+            left = [attach_leaf_left(tree, i)
+                    for tree in left for i = 1:length(tree)]
+            right = [attach_leaf_right(tree, i)
+                     for tree in right for i = 1:length(tree)]
+            if order > 3
+                @test !all(is_canonical, left)
+                @test !all(is_canonical, right)
+            end
+            left_canon = canonize.(left)
+            right_canon = canonize.(right)
+            @test all(is_canonical, left_canon)
+            @test all(is_canonical, right_canon)
+            left_counts = counts(left_canon)
+            right_counts = counts(right_canon)
+            @test left_counts == right_counts
+            for (tree, alpha) in left_counts
+                @test (factorial(BigInt(order)) ==
+                       alpha * butcher_density(tree) * butcher_symmetry(tree))
+            end
+        end
+    end
+end
+
+
 ############################################################## RESHAPE OPERATORS
 
 
@@ -159,7 +195,8 @@ end
 
 function test_incomplete(::Type{T}, order::Int) where {T}
     trees = random_trees()
-    ev = RKOCEvaluator{T}(trees, 0)
+    ev = RKOCEvaluator{T}(trees, 0;
+        optimize=true, sort_by_depth=rand(Bool))
     computed_trees = execute_instructions(ev.table.instructions)
     @test computed_trees[ev.table.selected_indices] == trees
     @test ev.inv_gamma == inv.(T.(butcher_density.(trees)))
