@@ -8,59 +8,41 @@ using ..RungeKuttaToolKit: NULL_INDEX
 ################################################################### BIPARTITIONS
 
 
-struct Bipartition{T}
-    left::Vector{T}
-    right::Vector{T}
-end
-
-
 struct BipartitionIterator{T}
     items::Vector{T}
 end
 
 
-Base.eltype(::Type{BipartitionIterator{T}}) where {T} = Bipartition{T}
+@inline Base.eltype(::Type{BipartitionIterator{T}}) where {T} =
+    Tuple{Vector{T},Vector{T}}
 
 
-function Base.length(iter::BipartitionIterator{T}) where {T}
-    n = length(iter.items)
-    if n <= 1
-        return 1
-    else
-        return (1 << (length(iter.items) - 1)) - 1
-    end
-end
+@inline Base.length(iter::BipartitionIterator{T}) where {T} =
+    isempty(iter.items) ? 0 : ((1 << (length(iter.items) - 1)) - 1)
 
 
 function Base.iterate(iter::BipartitionIterator{T}) where {T}
     n = length(iter.items)
-    if iszero(n)
-        return (Bipartition(T[], T[]), zero(UInt))
-    end
-    index = (one(UInt) << (n - 1)) - one(UInt)
-    left = T[@inbounds iter.items[1]]
-    right = Vector{T}(undef, n - 1)
-    @simd ivdep for i = 1:n-1
-        @inbounds right[i] = iter.items[i+1]
-    end
-    return (Bipartition(left, right), index)
+    return (n < 2) ? nothing : (
+        ((T[@inbounds iter.items[1]], @inbounds iter.items[2:n])),
+        (one(UInt) << (n - 1)) - one(UInt))
 end
 
 
-function Base.iterate(iter::BipartitionIterator{T}, index::UInt) where {T}
-    if iszero(index & ~one(UInt))
+function Base.iterate(iter::BipartitionIterator{T}, state::UInt) where {T}
+    if iszero(state & ~one(UInt))
         return nothing
     end
     n = length(iter.items)
-    index -= one(UInt)
-    next_index = index
+    state -= one(UInt)
+    next_state = state
     left = T[@inbounds iter.items[1]]
     right = T[]
     @inbounds for i = 2:n
-        push!(ifelse(iszero(index & one(UInt)), left, right), iter.items[i])
-        index >>= one(UInt)
+        push!(ifelse(iszero(state & one(UInt)), left, right), iter.items[i])
+        state >>= one(UInt)
     end
-    return (Bipartition(left, right), next_index)
+    return ((left, right), next_state)
 end
 
 
@@ -72,9 +54,33 @@ struct LevelSequence
 end
 
 
-Base.length(s::LevelSequence) = length(s.data)
-Base.getindex(s::LevelSequence, i::Int) = s.data[i]
-Base.:(==)(s::LevelSequence, t::LevelSequence) = (s.data == t.data)
+@inline Base.length(s::LevelSequence) = length(s.data)
+@inline Base.isempty(s::LevelSequence) = isempty(s.data)
+@inline Base.getindex(s::LevelSequence, i::Int) = s.data[i]
+@inline Base.getindex(s::LevelSequence, r::AbstractRange) =
+    LevelSequence(s.data[r])
+@inline Base.copy(s::LevelSequence) = LevelSequence(copy(s.data))
+
+@inline Base.:(==)(s::LevelSequence, t::LevelSequence) = (s.data == t.data)
+@inline Base.hash(s::LevelSequence, h::UInt) = hash(s.data, h)
+@inline Base.isless(s::LevelSequence, t::LevelSequence) =
+    isless(s.data, t.data)
+
+
+function decrement!(s::LevelSequence)
+    @simd ivdep for i = 1:length(s)
+        @inbounds s.data[i] -= 1
+    end
+    return s
+end
+
+
+function increment!(s::LevelSequence)
+    @simd ivdep for i = 1:length(s)
+        @inbounds s.data[i] += 1
+    end
+    return s
+end
 
 
 function count_legs(s::LevelSequence)
@@ -102,14 +108,12 @@ function extract_legs(s::LevelSequence)
             last = 2
             for j = 3:n
                 if s[j] == 2
-                    result[i] = LevelSequence(s.data[last:j-1])
-                    result[i].data .-= 1
+                    result[i] = decrement!(s[last:j-1])
                     i += 1
                     last = j
                 end
             end
-            result[i] = LevelSequence(s.data[last:end])
-            result[i].data .-= 1
+            result[i] = decrement!(s[last:n])
         end
         return result
     end
@@ -118,7 +122,7 @@ end
 
 function is_canonical(s::LevelSequence)
     legs = extract_legs(s)
-    if !issorted(legs; by=(t -> t.data), rev=true)
+    if !issorted(legs; rev=true)
         return false
     end
     for leg in legs
@@ -127,6 +131,42 @@ function is_canonical(s::LevelSequence)
         end
     end
     return true
+end
+
+
+function is_tall(s::LevelSequence)
+    @inbounds for i = 1:length(s)
+        if s[i] != i
+            return false
+        end
+    end
+    return true
+end
+
+
+function is_bushy(s::LevelSequence)
+    @assert !isempty(s)
+    @assert isone(s[1])
+    @inbounds for i = 2:length(s)
+        if s[i] != 2
+            return false
+        end
+    end
+    return true
+end
+
+
+function canonize(s::LevelSequence)
+    if is_tall(s) || is_bushy(s)
+        return copy(s)
+    end
+    result = [1]
+    for leg in sort!([canonize(leg) for leg in extract_legs(tree)]; rev=true)
+        for vertex in leg
+            push!(result, vertex + 1)
+        end
+    end
+    return LevelSequence(result)
 end
 
 
@@ -327,12 +367,12 @@ function find_butcher_instruction(
         end
     else
         candidates = ButcherInstruction[]
-        for p in BipartitionIterator(legs)
+        for (left, right) in BipartitionIterator(legs)
             left_leg = LevelSequence(reduce(vcat,
-                (leg.data .+ 1 for leg in p.left); init=[1]))
+                (leg.data .+ 1 for leg in left); init=[1]))
             if haskey(indices, left_leg)
                 right_leg = LevelSequence(reduce(vcat,
-                    (leg.data .+ 1 for leg in p.right); init=[1]))
+                    (leg.data .+ 1 for leg in right); init=[1]))
                 if haskey(indices, right_leg)
                     left_index = indices[left_leg]
                     right_index = indices[right_leg]
@@ -424,7 +464,7 @@ function grevlex_order(a::LevelSequence, b::LevelSequence)
     elseif len_a > len_b
         return false
     else
-        return a.data > b.data
+        return a > b
     end
 end
 
