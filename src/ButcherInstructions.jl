@@ -25,22 +25,22 @@ function Base.iterate(iter::BipartitionIterator{T}) where {T}
     n = length(iter.items)
     return (n < 2) ? nothing : (
         ((T[@inbounds iter.items[1]], @inbounds iter.items[2:n])),
-        (one(UInt) << (n - 1)) - one(UInt))
+        (one(UInt) << (n - 1)) - 1)
 end
 
 
 function Base.iterate(iter::BipartitionIterator{T}, state::UInt) where {T}
-    if iszero(state & ~one(UInt))
+    if state < 2
         return nothing
     end
     n = length(iter.items)
-    state -= one(UInt)
+    state -= 1
     next_state = state
     left = T[@inbounds iter.items[1]]
     right = T[]
     @inbounds for i = 2:n
-        push!(ifelse(iszero(state & one(UInt)), left, right), iter.items[i])
-        state >>= one(UInt)
+        push!(ifelse(iszero(state & 1), left, right), iter.items[i])
+        state >>= 1
     end
     return ((left, right), next_state)
 end
