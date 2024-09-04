@@ -574,10 +574,7 @@ function svg_string(
     width_string = svg_string(x_max - x_min)
     height_string = svg_string(y_max - y_min)
     return @sprintf(
-        """\
-        <svg xmlns="http://www.w3.org/2000/svg" \
-        width="%s" height="%s" viewBox="%s %s %s %s">\
-        """,
+        """<svg xmlns="http://www.w3.org/2000/svg" width="%s" height="%s" viewBox="%s %s %s %s">""",
         width_string, height_string,
         svg_string(x_min), svg_string(y_min),
         width_string, height_string)
@@ -598,7 +595,7 @@ max_y(circle::Circle) = circle.cy + circle.r
 
 
 svg_string(circle::Circle, color::String) = @sprintf(
-    "<circle cx=\"%s\" cy=\"%s\" r=\"%s\" stroke=\"%s\" />",
+    """<circle cx="%s" cy="%s" r="%s" stroke="%s" />""",
     svg_string(circle.cx), svg_string(circle.cy),
     svg_string(circle.r), color)
 
@@ -618,10 +615,7 @@ max_y(line::Line) = max(line.y1, line.y2)
 
 
 svg_string(line::Line, color::String, width::Float64) = @sprintf(
-    """\
-    <line x1="%s" y1="%s" x2="%s" y2="%s" \
-    stroke="%s" stroke-width="%s" />\
-    """,
+    """<line x1="%s" y1="%s" x2="%s" y2="%s" stroke="%s" stroke-width="%s" />""",
     svg_string(line.x1), svg_string(line.y1),
     svg_string(line.x2), svg_string(line.y2),
     color, width)
