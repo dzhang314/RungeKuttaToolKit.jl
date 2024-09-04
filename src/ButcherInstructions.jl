@@ -157,8 +157,33 @@ end
 
 function canonize(tree::LevelSequence)
     @assert is_valid(tree)
-    return (is_tall(tree) || is_bushy(tree)) ? copy(tree) : butcher_bracket(
+    return issorted(tree.data) ? copy(tree) : butcher_bracket(
         sort!([canonize(leg) for leg in extract_legs(tree)]; rev=true))
+end
+
+
+function is_linear(tree::LevelSequence)
+    data = canonize(tree).data
+    n = length(data)
+    for i = 1:n-1
+        if data[i] > data[i+1]
+            return issorted(view(data, i+1:n); rev=true)
+        end
+    end
+    return true
+end
+
+
+function classify_verner_type(tree::LevelSequence)
+    if is_bushy(tree)
+        return :A
+    elseif issorted(tree.data)
+        return :B
+    elseif is_linear(tree)
+        return :C
+    else
+        return :D
+    end
 end
 
 
