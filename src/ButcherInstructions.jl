@@ -5,6 +5,31 @@ using Printf
 using ..RungeKuttaToolKit: NULL_INDEX
 
 
+###################################################################### UTILITIES
+
+
+function counts(items::AbstractVector{T}) where {T}
+    result = Dict{T,Int}()
+    for item in items
+        if haskey(result, item)
+            result[item] += 1
+        else
+            result[item] = 1
+        end
+    end
+    return result
+end
+
+
+function add_dict!(dict::Dict{K,Set{V}}, key::K, value::V) where {K,V}
+    if !haskey(dict, key)
+        dict[key] = Set{V}()
+    end
+    push!(dict[key], value)
+    return dict
+end
+
+
 ################################################################### BIPARTITIONS
 
 
@@ -306,7 +331,7 @@ function generate_butcher_trees(n::Int; cumulative::Bool)
 end
 
 
-######################################################## LEVEL SEQUENCE ITERATOR
+################################################### FAST LEVEL SEQUENCE ITERATOR
 
 
 struct RevLexIterator
@@ -449,19 +474,6 @@ end
 ################################################## COMBINATORICS OF ROOTED TREES
 
 
-function counts(items::AbstractVector{T}) where {T}
-    result = Dict{T,Int}()
-    for item in items
-        if haskey(result, item)
-            result[item] += 1
-        else
-            result[item] = 1
-        end
-    end
-    return result
-end
-
-
 butcher_density(tree::LevelSequence) = reduce(*,
     butcher_density(leg) for leg in extract_legs(tree);
     init=BigInt(length(tree)))
@@ -476,7 +488,7 @@ butcher_symmetry(tree::LevelSequence) = reduce(*,
 ################################################################################
 
 
-function push_all_subtrees!(
+function push_necessary_subtrees!(
     subtrees::Set{LevelSequence},
     tree::LevelSequence,
 )
@@ -487,25 +499,25 @@ function push_all_subtrees!(
         end
     end
     for leg in extract_legs(tree)
-        push_all_subtrees!(subtrees, leg)
+        push_necessary_subtrees!(subtrees, leg)
     end
     return subtrees
 end
 
 
-function push_all_subtrees!(
+function push_necessary_subtrees!(
     subtrees::Set{LevelSequence},
     trees::AbstractVector{LevelSequence},
 )
     for tree in trees
-        push_all_subtrees!(subtrees, tree)
+        push_necessary_subtrees!(subtrees, tree)
     end
     return subtrees
 end
 
 
-all_subtrees(trees::AbstractVector{LevelSequence}) =
-    push_all_subtrees!(Set{LevelSequence}(), trees)
+necessary_subtrees(trees::AbstractVector{LevelSequence}) =
+    push_necessary_subtrees!(Set{LevelSequence}(), trees)
 
 
 function has_factors(trees::Set{LevelSequence}, tree::LevelSequence)
@@ -526,6 +538,40 @@ function has_factors(trees::Set{LevelSequence}, tree::LevelSequence)
             end
         end
         return false
+    end
+end
+
+
+has_all_factors(trees::Set{LevelSequence}) = all(
+    has_factors(trees, tree) for tree in trees)
+
+
+function best_factor(trees::Set{LevelSequence})
+    factors = Dict{LevelSequence,Set{LevelSequence}}()
+    for tree in trees
+        if !has_factors(trees, tree)
+            @assert count_legs(tree) > 2
+            for (left, right) in BipartitionIterator(extract_rooted_legs(tree))
+                left_factor = butcher_bracket(left)
+                right_factor = butcher_bracket(right)
+                left_present = left_factor in trees
+                right_present = right_factor in trees
+                @assert !(left_present && right_present)
+                if left_present
+                    add_dict!(factors, right_factor, tree)
+                elseif right_present
+                    add_dict!(factors, left_factor, tree)
+                elseif left_factor == right_factor
+                    add_dict!(factors, left_factor, tree)
+                end
+            end
+        end
+    end
+    if isempty(factors)
+        return nothing
+    else
+        return minimum((-length(list), length(tree), tree)
+                       for (tree, list) in factors)[3]
     end
 end
 
@@ -633,23 +679,6 @@ permute_butcher_instruction(insn::ButcherInstruction, perm::Vector{Int}) =
         insn.depth, insn.deficit)
 
 
-function push_necessary_subtrees!(
-    result::Dict{LevelSequence,Int}, tree::LevelSequence
-)
-    result[tree] = 0
-    legs = extract_legs(tree)
-    if isone(length(legs))
-        push_necessary_subtrees!(result, only(legs))
-    else
-        for leg in legs
-            push_necessary_subtrees!(result,
-                LevelSequence(vcat([1], leg.data .+ 1)))
-        end
-    end
-    return result
-end
-
-
 function glex_order(a::LevelSequence, b::LevelSequence)
     len_a = length(a)
     len_b = length(b)
@@ -673,16 +702,6 @@ function grevlex_order(a::LevelSequence, b::LevelSequence)
     else
         return a > b
     end
-end
-
-
-function necessary_subtrees(trees::Vector{LevelSequence})
-    result = Dict{LevelSequence,Int}()
-    for tree in trees
-        result[tree] = 0
-        push_necessary_subtrees!(result, tree)
-    end
-    return sort!(collect(keys(result)); lt=grevlex_order)
 end
 
 
