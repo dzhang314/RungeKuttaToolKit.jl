@@ -82,6 +82,18 @@ end
 end
 
 
+@inline function extract_rooted_leg(tree::LevelSequence, i::Int, j::Int)
+    @inbounds begin
+        result = Vector{Int}(undef, j - i + 2)
+        result[1] = 1
+        @simd ivdep for k = i:j
+            result[k-i+2] = tree[k]
+        end
+        return LevelSequence(result)
+    end
+end
+
+
 function extract_legs(tree::LevelSequence)
     @inbounds begin
         n = length(tree)
@@ -103,6 +115,33 @@ function extract_legs(tree::LevelSequence)
                 end
             end
             result[k+=1] = extract_leg(tree, i, n)
+        end
+        return result
+    end
+end
+
+
+function extract_rooted_legs(tree::LevelSequence)
+    @inbounds begin
+        n = length(tree)
+        num_legs = count_legs(tree)
+        result = Vector{LevelSequence}(undef, num_legs)
+        if iszero(num_legs)
+            @assert n == 1
+            @assert tree[1] == 1
+        else
+            @assert n > 1
+            @assert tree[1] == 1
+            @assert tree[2] == 2
+            k = 0
+            i = 2
+            for j = 3:n
+                if tree[j] == 2
+                    result[k+=1] = extract_rooted_leg(tree, i, j - 1)
+                    i = j
+                end
+            end
+            result[k+=1] = extract_rooted_leg(tree, i, n)
         end
         return result
     end
@@ -434,6 +473,63 @@ butcher_symmetry(tree::LevelSequence) = reduce(*,
     init=BigInt(1))
 
 
+################################################################################
+
+
+function push_all_subtrees!(
+    subtrees::Set{LevelSequence},
+    tree::LevelSequence,
+)
+    push!(subtrees, tree)
+    if count_legs(tree) > 1
+        for rooted_leg in extract_rooted_legs(tree)
+            push!(subtrees, rooted_leg)
+        end
+    end
+    for leg in extract_legs(tree)
+        push_all_subtrees!(subtrees, leg)
+    end
+    return subtrees
+end
+
+
+function push_all_subtrees!(
+    subtrees::Set{LevelSequence},
+    trees::AbstractVector{LevelSequence},
+)
+    for tree in trees
+        push_all_subtrees!(subtrees, tree)
+    end
+    return subtrees
+end
+
+
+all_subtrees(trees::AbstractVector{LevelSequence}) =
+    push_all_subtrees!(Set{LevelSequence}(), trees)
+
+
+function has_factors(trees::Set{LevelSequence}, tree::LevelSequence)
+    leg_count = count_legs(tree)
+    if leg_count == 0
+        return true
+    elseif leg_count == 1
+        return extract_leg(tree, 2, length(tree)) in trees
+    elseif leg_count == 2
+        left, right = extract_rooted_legs(tree)
+        return (left in trees) && (right in trees)
+    else
+        @assert leg_count > 2
+        for (left, right) in BipartitionIterator(extract_rooted_legs(tree))
+            if ((butcher_bracket(left) in trees) &&
+                (butcher_bracket(right) in trees))
+                return true
+            end
+        end
+        return false
+    end
+end
+
+
 ########################################################### BUTCHER INSTRUCTIONS
 
 
@@ -551,6 +647,19 @@ function push_necessary_subtrees!(
         end
     end
     return result
+end
+
+
+function glex_order(a::LevelSequence, b::LevelSequence)
+    len_a = length(a)
+    len_b = length(b)
+    if len_a < len_b
+        return true
+    elseif len_a > len_b
+        return false
+    else
+        return a < b
+    end
 end
 
 
