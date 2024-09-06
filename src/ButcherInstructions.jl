@@ -698,7 +698,7 @@ function build_instructions(input_trees::AbstractVector{LevelSequence})
     ordered_trees = sort!(collect(subtrees),
         by=(t -> (depth[t], count_legs(t) > 1, t)))
     @assert allunique(ordered_trees)
-    index = Dict(tree => i for (i, tree) in enumerate(ordered_trees))
+    index = Dict(tree => i for (i, tree) in pairs(ordered_trees))
     @assert keys(index) == subtrees
     deficit = Dict{LevelSequence,Int}()
     result = ButcherInstruction[]
@@ -770,7 +770,7 @@ end
 
 
 function compute_reverse_relationships(
-    instructions::AbstractVector{ButcherInstruction}
+    instructions::AbstractVector{ButcherInstruction},
 )
     extensions = [NULL_INDEX for _ in instructions]
     rooted_sums = [Pair{Int,Int}[] for _ in instructions]

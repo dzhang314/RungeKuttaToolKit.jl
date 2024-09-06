@@ -83,6 +83,10 @@ function RKOCEvaluator{T}(
 end
 
 
+RKOCEvaluator(trees::AbstractVector{LevelSequence}, num_stages::Integer) =
+    RKOCEvaluator{Float64}(trees, num_stages)
+
+
 """
     RKOCEvaluator{T}(order::Int, num_stages::Int) -> RKOCEvaluator{T}
 
@@ -92,8 +96,12 @@ Construct an `RKOCEvaluator` that encodes all rooted trees having at most
 By default, rooted trees are generated in graded reverse lexicographic order.
 This specific ordering maximizes the efficiency of generating all rooted trees.
 """
-@inline RKOCEvaluator{T}(order::Int, num_stages::Int) where {T} =
+RKOCEvaluator{T}(order::Int, num_stages::Int) where {T} =
     RKOCEvaluator{T}(all_rooted_trees(order), num_stages)
+
+
+RKOCEvaluator(order::Int, num_stages::Int) =
+    RKOCEvaluator{Float64}(order, num_stages)
 
 
 struct RKOCAdjoint{T} <: AbstractRKOCAdjoint{T}
@@ -787,10 +795,7 @@ end
 export RKOCOptimizationProblem
 
 
-struct RKOCOptimizationProblem{T,
-    E<:AbstractRKOCEvaluator{T},
-    C<:AbstractRKCost{T},
-    P<:AbstractRKParameterization{T}}
+struct RKOCOptimizationProblem{T,E,C,P}
 
     ev::E
     cost::C
