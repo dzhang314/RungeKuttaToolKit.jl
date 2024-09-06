@@ -778,17 +778,6 @@ function (adj::RKOCAdjoint{T})(
 end
 
 
-########################################################### LEAST-SQUARES SOLVER
-
-
-# using MultiFloats: MultiFloat, rsqrt
-# @inline inv_sqrt(x::Float16) = rsqrt(x)
-# @inline inv_sqrt(x::Float32) = rsqrt(x)
-# @inline inv_sqrt(x::Float64) = rsqrt(x)
-# @inline inv_sqrt(x::MultiFloat{T,N}) where {T,N} = rsqrt(x)
-# @inline inv_sqrt(x::T) where {T} = inv(sqrt(x))
-
-
 ################################################################################
 
 
