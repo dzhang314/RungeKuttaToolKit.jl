@@ -199,82 +199,111 @@ using RungeKuttaToolKit.RKParameterization
         A, b = RKParameterizationExplicit{BigFloat}(3)(
             Matrix{BigFloat}(undef, 3, 3),
             Vector{BigFloat}(undef, 3),
-            BigFloat[1, 2, 3, 4, 5, 6])
+            BigFloat.(1:6))
         @test A == BigFloat[0 0 0; 1 0 0; 2 3 0]
-        @test b == BigFloat[4, 5, 6]
+        @test b == BigFloat.(4:6)
     end
     let
         x = RKParameterizationExplicit{BigFloat}(3)(
             Vector{BigFloat}(undef, 6),
             BigFloat[0 0 0; 1 0 0; 2 3 0],
-            BigFloat[4, 5, 6])
-        @test x == BigFloat[1, 2, 3, 4, 5, 6]
+            BigFloat.(4:6))
+        @test x == BigFloat.(1:6)
     end
     let
         A = RKParameterizationExplicitQR{BigFloat}(3)(
             Matrix{BigFloat}(undef, 3, 3),
-            BigFloat[1, 2, 3])
+            BigFloat.(1:3))
         @test A == BigFloat[0 0 0; 1 0 0; 2 3 0]
     end
     let
         x = RKParameterizationExplicitQR{BigFloat}(3)(
             Vector{BigFloat}(undef, 3),
             BigFloat[0 0 0; 1 0 0; 2 3 0])
-        @test x == BigFloat[1, 2, 3]
+        @test x == BigFloat.(1:3)
     end
     let
         A, b = RKParameterizationDiagonallyImplicit{BigFloat}(3)(
             Matrix{BigFloat}(undef, 3, 3),
             Vector{BigFloat}(undef, 3),
-            BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9])
+            BigFloat.(1:9))
         @test A == BigFloat[1 0 0; 2 3 0; 4 5 6]
-        @test b == BigFloat[7, 8, 9]
+        @test b == BigFloat.(7:9)
     end
     let
         x = RKParameterizationDiagonallyImplicit{BigFloat}(3)(
             Vector{BigFloat}(undef, 9),
             BigFloat[1 0 0; 2 3 0; 4 5 6],
-            BigFloat[7, 8, 9])
-        @test x == BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9]
+            BigFloat.(7:9))
+        @test x == BigFloat.(1:9)
     end
     let
         A = RKParameterizationDiagonallyImplicitQR{BigFloat}(3)(
             Matrix{BigFloat}(undef, 3, 3),
-            BigFloat[1, 2, 3, 4, 5, 6])
+            BigFloat.(1:6))
         @test A == BigFloat[1 0 0; 2 3 0; 4 5 6]
     end
     let
         x = RKParameterizationDiagonallyImplicitQR{BigFloat}(3)(
             Vector{BigFloat}(undef, 6),
             BigFloat[1 0 0; 2 3 0; 4 5 6])
-        @test x == BigFloat[1, 2, 3, 4, 5, 6]
+        @test x == BigFloat.(1:6)
     end
     let
         A, b = RKParameterizationImplicit{BigFloat}(3)(
             Matrix{BigFloat}(undef, 3, 3),
             Vector{BigFloat}(undef, 3),
-            BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12])
+            BigFloat.(1:12))
         @test A == BigFloat[1 2 3; 4 5 6; 7 8 9]
-        @test b == BigFloat[10, 11, 12]
+        @test b == BigFloat.(10:12)
     end
     let
         x = RKParameterizationImplicit{BigFloat}(3)(
             Vector{BigFloat}(undef, 12),
             BigFloat[1 2 3; 4 5 6; 7 8 9],
-            BigFloat[10, 11, 12])
-        @test x == BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]
+            BigFloat.(10:12))
+        @test x == BigFloat.(1:12)
     end
     let
         A = RKParameterizationImplicitQR{BigFloat}(3)(
             Matrix{BigFloat}(undef, 3, 3),
-            BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9])
+            BigFloat.(1:9))
         @test A == BigFloat[1 2 3; 4 5 6; 7 8 9]
     end
     let
         x = RKParameterizationImplicitQR{BigFloat}(3)(
             Vector{BigFloat}(undef, 9),
             BigFloat[1 2 3; 4 5 6; 7 8 9])
-        @test x == BigFloat[1, 2, 3, 4, 5, 6, 7, 8, 9]
+        @test x == BigFloat.(1:9)
+    end
+    let
+        A, b = RKParameterizationParallelExplicit{BigFloat}(3, 2)(
+            Matrix{BigFloat}(undef, 7, 7),
+            Vector{BigFloat}(undef, 7),
+            BigFloat.(1:25))
+        @test A == BigFloat[
+            00 00 00 00 00 0 0;
+            01 00 00 00 00 0 0;
+            02 00 00 00 00 0 0;
+            03 04 05 00 00 0 0;
+            06 07 08 00 00 0 0;
+            09 10 11 12 13 0 0;
+            14 15 16 17 18 0 0]
+        @test b == BigFloat.(19:25)
+    end
+    let
+        x = RKParameterizationParallelExplicit{BigFloat}(3, 2)(
+            Vector{BigFloat}(undef, 25),
+            BigFloat[
+                00 00 00 00 00 0 0;
+                01 00 00 00 00 0 0;
+                02 00 00 00 00 0 0;
+                03 04 05 00 00 0 0;
+                06 07 08 00 00 0 0;
+                09 10 11 12 13 0 0;
+                14 15 16 17 18 0 0],
+            BigFloat.(19:25))
+        @test x == BigFloat.(1:25)
     end
 end
 

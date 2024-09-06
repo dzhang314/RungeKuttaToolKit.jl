@@ -5,6 +5,9 @@ using ..RungeKuttaToolKit: PERFORM_INTERNAL_BOUNDS_CHECKS,
     AbstractRKParameterization, AbstractRKParameterizationQR
 
 
+export AbstractRKParameterization, AbstractRKParameterizationQR
+
+
 ####################################################################### EXPLICIT
 
 
@@ -424,7 +427,6 @@ function (param::RKParameterizationImplicit{T})(
     end
 
     # Iterate over b.
-    copy!
     @simd ivdep for i = 1:s
         @inbounds x[offset+i] = b[i]
     end
@@ -508,11 +510,120 @@ end
 ############################################################## PARALLEL EXPLICIT
 
 
+export RKParameterizationParallelExplicit
+
+
 struct RKParameterizationParallelExplicit{T} <: AbstractRKParameterization{T}
     num_stages::Int
     num_variables::Int
     num_parallel_stages::Int
     parallel_width::Int
+
+    @inline RKParameterizationParallelExplicit{T}(
+        num_parallel_stages::Integer,
+        parallel_width::Integer,
+    ) where {T} = new{T}(
+        1 + num_parallel_stages * parallel_width,
+        1 + ((num_parallel_stages * parallel_width *
+              (4 + (num_parallel_stages - 1) * parallel_width)) >> 1),
+        num_parallel_stages, parallel_width)
+end
+
+
+@inline RKParameterizationParallelExplicit(
+    num_parallel_stages::Integer,
+    parallel_width::Integer,
+) = RKParameterizationParallelExplicit{Float64}(
+    num_parallel_stages, parallel_width)
+
+
+function (param::RKParameterizationParallelExplicit{T})(
+    A::AbstractMatrix{T},
+    b::AbstractVector{T},
+    x::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    s = param.num_stages
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        Base.require_one_based_indexing(A, b, x)
+        @assert size(A) == (s, s)
+        @assert size(b) == (s,)
+        @assert size(x) == (param.num_variables,)
+    end
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    # Initialize first row of A.
+    i = 1
+    @simd ivdep for j = 1:s
+        @inbounds A[i, j] = _zero
+    end
+
+    # Iterate over lower-triangular blocks of A.
+    offset = 0
+    for parallel_stage = 1:param.num_parallel_stages
+        row_length = 1 + (parallel_stage - 1) * param.parallel_width
+        for _ = 1:param.parallel_width
+            i += 1
+            @simd ivdep for j = 1:row_length
+                @inbounds A[i, j] = x[offset+j]
+            end
+            @simd ivdep for j = row_length+1:s
+                @inbounds A[i, j] = _zero
+            end
+            offset += row_length
+        end
+    end
+
+    # Iterate over b.
+    @simd ivdep for i = 1:s
+        @inbounds b[i] = x[offset+i]
+    end
+
+    return (A, b)
+end
+
+
+function (param::RKParameterizationParallelExplicit{T})(
+    x::AbstractVector{T},
+    A::AbstractMatrix{T},
+    b::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    s = param.num_stages
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        Base.require_one_based_indexing(x, A, b)
+        @assert size(x) == (param.num_variables,)
+        @assert size(A) == (s, s)
+        @assert size(b) == (s,)
+    end
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    # Iterate over lower-triangular blocks of A.
+    i = 1
+    offset = 0
+    for parallel_stage = 1:param.num_parallel_stages
+        row_length = 1 + (parallel_stage - 1) * param.parallel_width
+        for _ = 1:param.parallel_width
+            i += 1
+            @simd ivdep for j = 1:row_length
+                @inbounds x[offset+j] = A[i, j]
+            end
+            offset += row_length
+        end
+    end
+
+    # Iterate over b.
+    @simd ivdep for i = 1:s
+        @inbounds x[offset+i] = b[i]
+    end
+
+    return x
 end
 
 
