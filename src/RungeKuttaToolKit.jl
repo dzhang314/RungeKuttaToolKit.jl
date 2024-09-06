@@ -88,7 +88,7 @@ RKOCEvaluator(trees::AbstractVector{LevelSequence}, num_stages::Integer) =
 
 
 """
-    RKOCEvaluator{T}(order::Int, num_stages::Int) -> RKOCEvaluator{T}
+    RKOCEvaluator{T}(order::Integer, num_stages::Integer) -> RKOCEvaluator{T}
 
 Construct an `RKOCEvaluator` that encodes all rooted trees having at most
 `order` vertices.
@@ -96,11 +96,11 @@ Construct an `RKOCEvaluator` that encodes all rooted trees having at most
 By default, rooted trees are generated in graded reverse lexicographic order.
 This specific ordering maximizes the efficiency of generating all rooted trees.
 """
-RKOCEvaluator{T}(order::Int, num_stages::Int) where {T} =
+RKOCEvaluator{T}(order::Integer, num_stages::Integer) where {T} =
     RKOCEvaluator{T}(all_rooted_trees(order), num_stages)
 
 
-RKOCEvaluator(order::Int, num_stages::Int) =
+RKOCEvaluator(order::Integer, num_stages::Integer) =
     RKOCEvaluator{Float64}(order, num_stages)
 
 
@@ -822,6 +822,15 @@ struct RKOCOptimizationProblem{T,E,C,P}
 end
 
 
+struct RKOCOptimizationProblemAdjoint{T,E,C,P}
+    prob::RKOCOptimizationProblem{T,E,C,P}
+end
+
+
+@inline Base.adjoint(prob::RKOCOptimizationProblem{T,E,C,P}) where {T,E,C,P} =
+    RKOCOptimizationProblemAdjoint{T,E,C,P}(prob)
+
+
 function (prob::RKOCOptimizationProblem{T,E,C,P})(
     x::AbstractVector{T},
 ) where {T,
@@ -836,7 +845,7 @@ function (prob::RKOCOptimizationProblem{T,E,C,P})(
 end
 
 
-function (prob::RKOCOptimizationProblem{T,E,C,P})(
+function (adj::RKOCOptimizationProblemAdjoint{T,E,C,P})(
     g::AbstractVector{T},
     x::AbstractVector{T},
 ) where {T,
@@ -845,12 +854,26 @@ function (prob::RKOCOptimizationProblem{T,E,C,P})(
     P<:AbstractRKParameterization{T}}
 
     @assert axes(g) == axes(x)
-    @assert length(g) == prob.param.num_variables
+    @assert length(g) == adj.prob.param.num_variables
 
-    prob.param(prob.A, prob.b, x)
-    prob.ev'(prob.dA, prob.db, prob.cost, prob.A, prob.b)
-    prob.param(g, prob.dA, prob.db)
+    adj.prob.param(adj.prob.A, adj.prob.b, x)
+    adj.prob.ev'(adj.prob.dA, adj.prob.db,
+        adj.prob.cost, adj.prob.A, adj.prob.b)
+    adj.prob.param(g, adj.prob.dA, adj.prob.db)
     return g
+end
+
+
+function (adj::RKOCOptimizationProblemAdjoint{T,E,C,P})(
+    x::AbstractVector{T},
+) where {T,
+    E<:AbstractRKOCEvaluator{T},
+    C<:AbstractRKCost{T},
+    P<:AbstractRKParameterization{T}}
+
+    @assert length(x) == adj.prob.param.num_variables
+
+    return adj(similar(x), x)
 end
 
 

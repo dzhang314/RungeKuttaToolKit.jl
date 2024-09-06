@@ -15,6 +15,9 @@ export RKCostL1
 struct RKCostL1{T} <: AbstractRKCost{T} end
 
 
+@inline RKCostL1() = RKCostL1{Float64}()
+
+
 function (::RKCostL1{T})(
     ev::AbstractRKOCEvaluator{T},
     b::AbstractVector{T},
@@ -280,6 +283,9 @@ export RKCostL2
 struct RKCostL2{T} <: AbstractRKCost{T} end
 
 
+@inline RKCostL2() = RKCostL2{Float64}()
+
+
 function (::RKCostL2{T})(
     ev::AbstractRKOCEvaluator{T},
     b::AbstractVector{T},
@@ -477,6 +483,9 @@ export RKCostLInfinity
 
 
 struct RKCostLInfinity{T} <: AbstractRKCost{T} end
+
+
+@inline RKCostLInfinity() = RKCostLInfinity{Float64}()
 
 
 function (::RKCostLInfinity{T})(

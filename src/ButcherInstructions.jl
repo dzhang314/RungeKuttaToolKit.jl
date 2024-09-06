@@ -87,8 +87,7 @@ end
 @inline Base.hash(tree::LevelSequence, h::UInt) = hash(tree.data, h)
 @inline Base.:(==)(s::LevelSequence, t::LevelSequence) = (s.data == t.data)
 @inline Base.isless(s::LevelSequence, t::LevelSequence) = (s.data < t.data)
-@inline Base.@propagate_inbounds Base.getindex(tree::LevelSequence, i::Int) =
-    tree.data[i]
+@inline Base.getindex(tree::LevelSequence, i::Integer) = tree.data[i]
 
 
 ###################################################### SPLITTING LEVEL SEQUENCES
@@ -490,15 +489,18 @@ end
 ########################################################## ROOTED TREE INTERFACE
 
 
-function rooted_trees(n::Int; tree_ordering::Symbol=:reverse_lexicographic)
+function rooted_trees(
+    n::Integer;
+    tree_ordering::Symbol=:reverse_lexicographic,
+)
     if tree_ordering == :reverse_lexicographic
-        return collect(RevLexIterator(n))
+        return collect(RevLexIterator(Int(n)))
     elseif tree_ordering == :lexicographic
-        return reverse!(collect(RevLexIterator(n)))
+        return reverse!(collect(RevLexIterator(Int(n))))
     elseif tree_ordering == :attach
-        return generate_rooted_trees(n; cumulative=false)
+        return generate_rooted_trees(Int(n); cumulative=false)
     elseif tree_ordering == :butcher
-        return generate_butcher_trees(n; cumulative=false)
+        return generate_butcher_trees(Int(n); cumulative=false)
     else
         throw(ArgumentError(
             "Unknown tree_ordering $tree_ordering " *
@@ -508,17 +510,21 @@ function rooted_trees(n::Int; tree_ordering::Symbol=:reverse_lexicographic)
 end
 
 
-function all_rooted_trees(n::Int; tree_ordering::Symbol=:reverse_lexicographic)
+function all_rooted_trees(
+    n::Integer;
+    tree_ordering::Symbol=:reverse_lexicographic,
+)
     if tree_ordering == :reverse_lexicographic
-        return reduce(vcat, collect(RevLexIterator(i)) for i = 1:n;
+        return reduce(vcat, collect(RevLexIterator(i)) for i = 1:Int(n);
             init=LevelSequence[])
     elseif tree_ordering == :lexicographic
-        return reduce(vcat, reverse!(collect(RevLexIterator(i))) for i = 1:n;
+        return reduce(vcat,
+            reverse!(collect(RevLexIterator(i))) for i = 1:Int(n);
             init=LevelSequence[])
     elseif tree_ordering == :attach
-        return generate_rooted_trees(n; cumulative=true)
+        return generate_rooted_trees(Int(n); cumulative=true)
     elseif tree_ordering == :butcher
-        return generate_butcher_trees(n; cumulative=true)
+        return generate_butcher_trees(Int(n); cumulative=true)
     else
         throw(ArgumentError(
             "Unknown tree_ordering $tree_ordering " *

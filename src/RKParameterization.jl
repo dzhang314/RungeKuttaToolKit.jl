@@ -16,9 +16,13 @@ struct RKParameterizationExplicit{T} <: AbstractRKParameterization{T}
     num_stages::Int
     num_variables::Int
 
-    @inline RKParameterizationExplicit{T}(s::Int) where {T} =
+    @inline RKParameterizationExplicit{T}(s::Integer) where {T} =
         new{T}(s, (s * (s + 1)) >> 1)
 end
+
+
+@inline RKParameterizationExplicit(s::Integer) =
+    RKParameterizationExplicit{Float64}(s)
 
 
 function (param::RKParameterizationExplicit{T})(
@@ -104,9 +108,13 @@ struct RKParameterizationExplicitQR{T} <: AbstractRKParameterizationQR{T}
     num_stages::Int
     num_variables::Int
 
-    @inline RKParameterizationExplicitQR{T}(s::Int) where {T} =
+    @inline RKParameterizationExplicitQR{T}(s::Integer) where {T} =
         new{T}(s, (s * (s - 1)) >> 1)
 end
+
+
+@inline RKParameterizationExplicitQR(s::Integer) =
+    RKParameterizationExplicitQR{Float64}(s)
 
 
 function (param::RKParameterizationExplicitQR{T})(
@@ -178,9 +186,13 @@ struct RKParameterizationDiagonallyImplicit{T} <: AbstractRKParameterization{T}
     num_stages::Int
     num_variables::Int
 
-    @inline RKParameterizationDiagonallyImplicit{T}(s::Int) where {T} =
+    @inline RKParameterizationDiagonallyImplicit{T}(s::Integer) where {T} =
         new{T}(s, (s * (s + 3)) >> 1)
 end
+
+
+@inline RKParameterizationDiagonallyImplicit(s::Integer) =
+    RKParameterizationDiagonallyImplicit{Float64}(s)
 
 
 function (param::RKParameterizationDiagonallyImplicit{T})(
@@ -267,9 +279,13 @@ struct RKParameterizationDiagonallyImplicitQR{T} <:
     num_stages::Int
     num_variables::Int
 
-    @inline RKParameterizationDiagonallyImplicitQR{T}(s::Int) where {T} =
+    @inline RKParameterizationDiagonallyImplicitQR{T}(s::Integer) where {T} =
         new{T}(s, (s * (s + 1)) >> 1)
 end
+
+
+@inline RKParameterizationDiagonallyImplicitQR(s::Integer) =
+    RKParameterizationDiagonallyImplicitQR{Float64}(s)
 
 
 function (param::RKParameterizationDiagonallyImplicitQR{T})(
@@ -341,9 +357,13 @@ struct RKParameterizationImplicit{T} <: AbstractRKParameterization{T}
     num_stages::Int
     num_variables::Int
 
-    @inline RKParameterizationImplicit{T}(s::Int) where {T} =
+    @inline RKParameterizationImplicit{T}(s::Integer) where {T} =
         new{T}(s, s * (s + 1))
 end
+
+
+@inline RKParameterizationImplicit(s::Integer) =
+    RKParameterizationImplicit{Float64}(s)
 
 
 function (param::RKParameterizationImplicit{T})(
@@ -424,9 +444,13 @@ struct RKParameterizationImplicitQR{T} <: AbstractRKParameterizationQR{T}
     num_stages::Int
     num_variables::Int
 
-    @inline RKParameterizationImplicitQR{T}(s::Int) where {T} =
+    @inline RKParameterizationImplicitQR{T}(s::Integer) where {T} =
         new{T}(s, s * s)
 end
+
+
+@inline RKParameterizationImplicitQR(s::Integer) =
+    RKParameterizationImplicitQR{Float64}(s)
 
 
 function (param::RKParameterizationImplicitQR{T})(
