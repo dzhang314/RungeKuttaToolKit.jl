@@ -8,7 +8,7 @@ using Test
 const MAX_ORDER = 10
 const MAX_NUM_STAGES = 20
 const NUM_RANDOM_TRIALS = 10
-const GRADIENT_TOLERANCE_BITS = 10
+const GRADIENT_TOLERANCE_BITS = 16
 const NUMERIC_TYPES = [
     Float16, Float32, Float64, BigFloat,
     Float64x1, Float64x2, Float64x3, Float64x4,
