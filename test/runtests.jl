@@ -1,4 +1,5 @@
 using MultiFloats
+using Random: shuffle!
 using RungeKuttaToolKit
 using StatsBase: sample
 using Test
@@ -14,10 +15,18 @@ const NUMERIC_TYPES = [
     Float64x5, Float64x6, Float64x7, Float64x8]
 
 
+using RungeKuttaToolKit.ButcherInstructions:
+    is_palm, butcher_bracket, extract_legs
+
+
+shuffle_tree(tree::LevelSequence) =
+    is_palm(tree) ? copy(tree) : butcher_bracket(
+        shuffle!(shuffle_tree.(extract_legs(tree))))
+
+
 const ALL_TREES = all_rooted_trees(MAX_ORDER)
-@inline random_trees() = sample(
-    ALL_TREES, rand(1:length(ALL_TREES));
-    replace=false, ordered=false)
+random_trees() = shuffle_tree.(sample(ALL_TREES, rand(1:length(ALL_TREES));
+    replace=false, ordered=false))
 
 
 function relative_difference(x::T, y::T) where {T}
@@ -273,32 +282,17 @@ end
 ##################################################### RKOCEVALUATOR CONSTRUCTION
 
 
-using RungeKuttaToolKit.ButcherInstructions: execute_instructions
-
-
-function test_complete(::Type{T}, order::Int) where {T}
-    ev = RKOCEvaluator{T}(order, 0)
-    @test all(i == j for (i, j) in pairs(ev.table.selected_indices))
-    @test execute_instructions(ev.table.instructions) == all_rooted_trees(order)
-    @test ev.inv_gamma == inv.(T.(butcher_density.(all_rooted_trees(order))))
-end
-
-
-function test_incomplete(::Type{T}, order::Int) where {T}
-    trees = random_trees()
-    ev = RKOCEvaluator{T}(trees, 0;
-        optimize=true, sort_by_depth=rand(Bool))
-    computed_trees = execute_instructions(ev.table.instructions)
-    @test computed_trees[ev.table.selected_indices] == trees
-    @test ev.inv_gamma == inv.(T.(butcher_density.(trees)))
-end
+using RungeKuttaToolKit.ButcherInstructions: canonize, execute_instructions
 
 
 @testset "RKOCEvaluator construction" begin
     for order = 0:MAX_ORDER
         for T in NUMERIC_TYPES
-            test_complete(T, order)
-            test_incomplete(T, order)
+            trees = random_trees()
+            ev = RKOCEvaluator{T}(trees, order)
+            computed = execute_instructions(ev.table.instructions)
+            @test canonize.(computed[ev.table.selected_indices]) == canonize.(trees)
+            @test ev.inv_gamma == inv.(T.(butcher_density.(trees)))
         end
     end
 end

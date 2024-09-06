@@ -58,9 +58,7 @@ end
 """
     RKOCEvaluator{T}(
         trees::AbstractVector{LevelSequence},
-        num_stages::Integer;
-        optimize::Bool=true,
-        sort_by_depth::Bool=true,
+        num_stages::Integer,
     ) -> RKOCEvaluator{T}
 
 Construct an `RKOCEvaluator` that encodes a given sequence of rooted trees.
@@ -69,26 +67,15 @@ Construct an `RKOCEvaluator` that encodes a given sequence of rooted trees.
 - `trees`: input vector of rooted trees in `LevelSequence` representation.
 - `num_stages`: number of stages (i.e., size of the Butcher tableau). Must be
     known at construction time to allocate internal workspace arrays.
-- `optimize`: if `true`, perform common subtree elimination. This may improve
-    performance in cases where `trees` is not the complete set of all rooted
-    trees up to a certain order.
-- `sort_by_depth`: if `true`, permute internal workspace arrays so that
-    intermediate results are calculated in an order that enables parallel
-    execution. This has no effect on single-threaded execution and is provided
-    for forward compatibility with future parallel implementations.
 
-Note that different permutations of `trees`, in addition to different values
-of `optimize` and `sort_by_depth`, may yield slightly different results due to
-the non-associative nature of floating-point arithmetic.
+Note that different permutations of `trees` may yield slightly different
+results due to the non-associative nature of floating-point arithmetic.
 """
 function RKOCEvaluator{T}(
     trees::AbstractVector{LevelSequence},
-    num_stages::Integer;
-    optimize::Bool=true,
-    sort_by_depth::Bool=true,
+    num_stages::Integer,
 ) where {T}
-    table = ButcherInstructionTable(trees;
-        optimize=optimize, sort_by_depth=sort_by_depth)
+    table = ButcherInstructionTable(trees)
     return RKOCEvaluator{T}(table,
         Matrix{T}(undef, num_stages, length(table.instructions)),
         Matrix{T}(undef, num_stages, length(table.instructions)),
@@ -102,13 +89,11 @@ end
 Construct an `RKOCEvaluator` that encodes all rooted trees having at most
 `order` vertices.
 
-By default, rooted trees are generated in graded reverse lexicographic order
-of their level sequence representation. This specific ordering maximizes the
-efficiency of generating all rooted trees.
+By default, rooted trees are generated in graded reverse lexicographic order.
+This specific ordering maximizes the efficiency of generating all rooted trees.
 """
 @inline RKOCEvaluator{T}(order::Int, num_stages::Int) where {T} =
-    RKOCEvaluator{T}(all_rooted_trees(order), num_stages;
-        optimize=false, sort_by_depth=false)
+    RKOCEvaluator{T}(all_rooted_trees(order), num_stages)
 
 
 struct RKOCAdjoint{T} <: AbstractRKOCAdjoint{T}
