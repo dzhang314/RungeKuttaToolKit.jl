@@ -8,7 +8,7 @@ const NULL_INDEX = typemin(Int)
 include("ButcherInstructions.jl")
 
 
-const PERFORM_INTERNAL_BOUNDS_CHECKS = true
+const PERFORM_INTERNAL_BOUNDS_CHECKS = false
 abstract type AbstractRKParameterization{T} end
 abstract type AbstractRKParameterizationQR{T} end
 include("RKParameterization.jl")

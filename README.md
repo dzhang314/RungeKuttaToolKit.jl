@@ -12,7 +12,7 @@
 
 * **[RKTK][2]** contains parallel search and nonlinear optimization scripts that specifically target the discovery of new Runge–Kutta methods. In contrast to the pure mathematical operations in **RungeKuttaToolKit.jl**, the programs in **RKTK** establish a number of RKTK-specific conventions regarding optimization hyperparameters and file structure. Consequently, **RKTK** is not a registered Julia package.
 
-Both **RungeKuttaToolKit.jl** and **RKTK** are designed with reproducibility as an explicit goal. The [RKTKSearch.jl][3] program has been tested to produce bit-for-bit identical results across multiple architectures (i686, x86-64, ARMv8) and multiple CPU generations (Haswell, Skylake, Rocket Lake, Zen 4).
+Both **RungeKuttaToolKit.jl** and **RKTK** are designed with reproducibility as an explicit goal. The [RKTKSearch.jl][3] program has been tested to produce bit-for-bit identical results across multiple architectures (i686, x86-64, ARMv8) and multiple CPU generations (Haswell, Skylake, Rocket Lake, Zen 5).
 
 
 
