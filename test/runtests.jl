@@ -8,7 +8,7 @@ using Test
 const MAX_ORDER = 10
 const MAX_NUM_STAGES = 20
 const NUM_RANDOM_TRIALS = 10
-const NUM_TOLERANCE_BITS = 8
+const NUM_TOLERANCE_BITS = 10
 const NUMERIC_TYPES = [
     Float16, Float32, Float64, BigFloat,
     Float64x1, Float64x2, Float64x3, Float64x4,
@@ -430,12 +430,12 @@ function test_cost_functions(::Type{T}, method::Function, order::Int) where {T}
 end
 
 
-# @testset "cost functions" begin
-#     for T in NUMERIC_TYPES
-#         test_cost_functions(T, RK4, 4)
-#         test_cost_functions(T, GL6, 6)
-#     end
-# end
+@testset "cost functions" begin
+    for T in NUMERIC_TYPES
+        test_cost_functions(T, RK4, 4)
+        test_cost_functions(T, GL6, 6)
+    end
+end
 
 
 ######################################################## DIRECTIONAL DERIVATIVES
@@ -484,11 +484,11 @@ function test_directional_derivatives(::Type{T}) where {T}
 end
 
 
-# @testset "directional derivatives" begin
-#     for T in NUMERIC_TYPES
-#         test_directional_derivatives(T)
-#     end
-# end
+@testset "directional derivatives" begin
+    for T in NUMERIC_TYPES
+        test_directional_derivatives(T)
+    end
+end
 
 
 ############################################################ PARTIAL DERIVATIVES
@@ -548,11 +548,11 @@ function test_partial_derivatives(::Type{T}) where {T}
 end
 
 
-# @testset "partial derivatives" begin
-#     for T in NUMERIC_TYPES
-#         test_partial_derivatives(T)
-#     end
-# end
+@testset "partial derivatives" begin
+    for T in NUMERIC_TYPES
+        test_partial_derivatives(T)
+    end
+end
 
 
 ###################################################################### GRADIENTS
@@ -676,7 +676,11 @@ function test_jacobian(param::AbstractRKParameterization{T}) where {T}
                   ev(A - h * dA, b - h * db)) / (h + h)
 
     jacobian = Matrix{T}(undef, length(dresiduals), param.num_variables)
-    param(jacobian, A, b, ev, x)
+    if isbitstype(T)
+        @test iszero(@allocated ev'(jacobian, A, b, param, x))
+    else
+        ev'(jacobian, A, b, param, x)
+    end
 
     return maximum_relative_difference(dresiduals, jacobian * dx) < tolerance
 end
