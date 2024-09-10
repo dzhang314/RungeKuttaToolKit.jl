@@ -2,9 +2,9 @@ module RKParameterization
 
 
 using ..RungeKuttaToolKit: PERFORM_INTERNAL_BOUNDS_CHECKS,
+    AbstractRKOCEvaluator, AbstractRKOCEvaluatorAO,
     AbstractRKParameterization, AbstractRKParameterizationAO,
-    AbstractRKOCEvaluator, AbstractRKOCEvaluatorAO, get_axes,
-    compute_Phi!, pushforward_dPhi!, pushforward_dresiduals!
+    get_axes, compute_Phi!, pushforward_dPhi!, pushforward_dresiduals!
 
 
 export AbstractRKParameterization, AbstractRKParameterizationAO

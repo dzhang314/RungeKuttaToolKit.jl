@@ -2,8 +2,12 @@ module RKCost
 
 
 using ..RungeKuttaToolKit: NULL_INDEX, PERFORM_INTERNAL_BOUNDS_CHECKS,
-    AbstractRKOCEvaluator, AbstractRKOCAdjoint, AbstractRKCost,
+    AbstractRKOCEvaluator, AbstractRKOCEvaluatorAO,
+    AbstractRKOCAdjoint, AbstractRKOCAdjointAO, AbstractRKCost,
     get_axes, compute_residual
+
+
+export AbstractRKCost
 
 
 ############################################################################# L1
