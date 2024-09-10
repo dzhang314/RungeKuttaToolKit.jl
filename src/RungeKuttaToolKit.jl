@@ -8,7 +8,7 @@ const NULL_INDEX = typemin(Int)
 include("ButcherInstructions.jl")
 
 
-const PERFORM_INTERNAL_BOUNDS_CHECKS = true
+const PERFORM_INTERNAL_BOUNDS_CHECKS = false
 abstract type AbstractRKOCEvaluator{T} end
 abstract type AbstractRKOCEvaluatorAO{T} end
 abstract type AbstractRKParameterization{T} end
