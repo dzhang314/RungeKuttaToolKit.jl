@@ -9,7 +9,7 @@ using ..RungeKuttaToolKit: AbstractRKOCEvaluator, AbstractRKOCAdjoint,
 
 """
     (ev::AbstractRKOCEvaluator{T})(
-        residuals::AbstractVector{T},
+        [residuals::AbstractVector{T},]
         A::AbstractMatrix{T},
         b::AbstractVector{T},
     ) -> AbstractVector{T}
@@ -24,6 +24,7 @@ over a set of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
 - `residuals`: length ``|T|`` output vector. Each residual
     ``\\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t)`` is written to
     `residuals[i]` in the order specified when constructing `ev`.
+    If not provided, a new vector is allocated and returned.
 - `A`: ``s \\times s`` input matrix containing the coefficients of a
     Runge--Kutta method (i.e., the upper-right block of a Butcher tableau).
 - `b`: length ``s`` input vector containing the weights of a Runge--Kutta
@@ -104,7 +105,7 @@ end
 
 """
     (adj::AbstractRKOCAdjoint{T})(
-        dresiduals::AbstractVector{T},
+        [dresiduals::AbstractVector{T},]
         A::AbstractMatrix{T},
         dA::AbstractMatrix{T},
         b::AbstractVector{T},
@@ -127,6 +128,7 @@ over a set of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
     ``\\nabla_{\\mathrm{d}A, \\mathrm{d}\\mathbf{b}} [
     \\mathbf{b} \\cdot \\Phi_t(A) ]`` is written to `dresiduals[i]` in the
     order specified when constructing `ev`.
+    If not provided, a new vector is allocated and returned.
 - `A`: ``s \\times s`` input matrix containing the coefficients of a
     Runge--Kutta method (i.e., the upper-right block of a Butcher tableau).
 - `dA`: ``s \\times s`` input matrix containing the direction in which to
@@ -161,9 +163,27 @@ function (adj::AbstractRKOCAdjoint{T})(
 end
 
 
+function (adj::AbstractRKOCAdjoint{T})(
+    A::AbstractMatrix{T},
+    dA::AbstractMatrix{T},
+    b::AbstractVector{T},
+    db::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, output_axis = get_axes(adj.ev)
+    @assert axes(A) == (stage_axis, stage_axis)
+    @assert axes(dA) == (stage_axis, stage_axis)
+    @assert axes(b) == (stage_axis,)
+    @assert axes(db) == (stage_axis,)
+
+    return adj(similar(Vector{T}, output_axis), A, dA, b, db)
+end
+
+
 """
     (adj::AbstractRKOCAdjoint{T})(
-        dresiduals::AbstractVector{T},
+        [dresiduals::AbstractVector{T},]
         A::AbstractMatrix{T},
         i::Integer,
         j::Integer,
@@ -183,6 +203,7 @@ over a set of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
 - `dresiduals`: length ``|T|`` output vector. Each partial derivative
     ``\\partial_{A_{i,j}} [ \\mathbf{b} \\cdot \\Phi_t(A) ]`` is written to
     `dresiduals[i]` in the order specified when constructing `ev`.
+    If not provided, a new vector is allocated and returned.
 - `A`: ``s \\times s`` input matrix containing the coefficients of a
     Runge--Kutta method (i.e., the upper-right block of a Butcher tableau).
 - `i`: row index of the entry of ``A`` to differentiate with respect to.
@@ -220,9 +241,27 @@ function (adj::AbstractRKOCAdjoint{T})(
 end
 
 
+function (adj::AbstractRKOCAdjoint{T})(
+    A::AbstractMatrix{T},
+    i::Integer,
+    j::Integer,
+    b::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, output_axis = get_axes(adj.ev)
+    @assert axes(A) == (stage_axis, stage_axis)
+    @assert i in stage_axis
+    @assert j in stage_axis
+    @assert axes(b) == (stage_axis,)
+
+    return adj(similar(Vector{T}, output_axis), A, i, j, b)
+end
+
+
 """
     (adj::AbstractRKOCAdjoint{T})(
-        dresiduals::AbstractVector{T},
+        [dresiduals::AbstractVector{T},]
         A::AbstractMatrix{T},
         i::Integer,
     ) -> AbstractVector{T}
@@ -241,6 +280,7 @@ over a set of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
 - `dresiduals`: length ``|T|`` output vector. Each partial derivative
     ``\\partial_{b_i} [ \\mathbf{b} \\cdot \\Phi_t(A) ]`` is written to
     `dresiduals[i]` in the order specified when constructing `ev`.
+    If not provided, a new vector is allocated and returned.
 - `A`: ``s \\times s`` input matrix containing the coefficients of a
     Runge--Kutta method (i.e., the upper-right block of a Butcher tableau).
 - `i`: index of the entry of ``\\mathbf{b}`` to differentiate with respect to.
@@ -274,6 +314,20 @@ function (adj::AbstractRKOCAdjoint{T})(
     end
 
     return dresiduals
+end
+
+
+function (adj::AbstractRKOCAdjoint{T})(
+    A::AbstractMatrix{T},
+    i::Integer,
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, output_axis = get_axes(adj.ev)
+    @assert axes(A) == (stage_axis, stage_axis)
+    @assert i in stage_axis
+
+    return adj(similar(Vector{T}, output_axis), A, i)
 end
 
 
