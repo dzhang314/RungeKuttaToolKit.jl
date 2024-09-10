@@ -11,15 +11,18 @@ include("ButcherInstructions.jl")
 const PERFORM_INTERNAL_BOUNDS_CHECKS = true
 abstract type AbstractRKParameterization{T} end
 abstract type AbstractRKParameterizationAO{T} end
+abstract type AbstractRKOCEvaluator{T} end
+abstract type AbstractRKOCEvaluatorAO{T} end
+function get_axes end
+function compute_Phi! end
+function pushforward_dPhi! end
+function pushforward_dresiduals! end
 include("RKParameterization.jl")
 
 
-abstract type AbstractRKOCEvaluator{T} end
-abstract type AbstractRKOCEvaluatorAO{T} end
 abstract type AbstractRKOCAdjoint{T} end
 abstract type AbstractRKOCAdjointAO{T} end
 abstract type AbstractRKCost{T} end
-function get_axes end
 function compute_residual end
 include("RKCost.jl")
 

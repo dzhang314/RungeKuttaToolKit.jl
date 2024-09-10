@@ -2,7 +2,9 @@ module RKParameterization
 
 
 using ..RungeKuttaToolKit: PERFORM_INTERNAL_BOUNDS_CHECKS,
-    AbstractRKParameterization, AbstractRKParameterizationAO
+    AbstractRKParameterization, AbstractRKParameterizationAO,
+    AbstractRKOCEvaluator, AbstractRKOCEvaluatorAO, get_axes,
+    compute_Phi!, pushforward_dPhi!, pushforward_dresiduals!
 
 
 export AbstractRKParameterization, AbstractRKParameterizationAO
@@ -97,6 +99,51 @@ function (param::RKParameterizationExplicit{T})(
     end
 
     return x
+end
+
+
+function (param::RKParameterizationExplicit{T})(
+    jacobian::AbstractMatrix{T},
+    A::AbstractMatrix{T},
+    b::AbstractVector{T},
+    ev::AbstractRKOCEvaluator{T},
+    x::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    s = param.num_stages
+    stage_axis, _, output_axis = get_axes(ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        Base.require_one_based_indexing(jacobian, A, b, x)
+        @assert size(jacobian) == (length(output_axis), param.num_variables)
+        @assert size(A) == (s, s)
+        @assert size(b) == (s,)
+        @assert size(x) == (param.num_variables,)
+        @assert size(stage_axis) == (s,)
+    end
+
+    # Compute Butcher weight vectors.
+    param(A, b, x)
+    compute_Phi!(ev, A)
+
+    # Compute derivatives with respect to the strict lower-triangular part of A.
+    k = 0
+    for i = 1:s
+        for j = 1:i-1
+            pushforward_dPhi!(ev, A, i, j)
+            pushforward_dresiduals!(view(jacobian, :, k += 1), ev, b)
+        end
+    end
+
+    # Compute derivatives with respect to b.
+    for i = 1:s
+        k += 1
+        @inbounds for (j, m) in pairs(ev.table.selected_indices)
+            jacobian[j, k] = ev.Phi[i, m]
+        end
+    end
+
+    return jacobian
 end
 
 
@@ -270,6 +317,51 @@ function (param::RKParameterizationDiagonallyImplicit{T})(
 end
 
 
+function (param::RKParameterizationDiagonallyImplicit{T})(
+    jacobian::AbstractMatrix{T},
+    A::AbstractMatrix{T},
+    b::AbstractVector{T},
+    ev::AbstractRKOCEvaluator{T},
+    x::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    s = param.num_stages
+    stage_axis, _, output_axis = get_axes(ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        Base.require_one_based_indexing(jacobian, A, b, x)
+        @assert size(jacobian) == (length(output_axis), param.num_variables)
+        @assert size(A) == (s, s)
+        @assert size(b) == (s,)
+        @assert size(x) == (param.num_variables,)
+        @assert size(stage_axis) == (s,)
+    end
+
+    # Compute Butcher weight vectors.
+    param(A, b, x)
+    compute_Phi!(ev, A)
+
+    # Compute derivatives with respect to the lower-triangular part of A.
+    k = 0
+    for i = 1:s
+        for j = 1:i
+            pushforward_dPhi!(ev, A, i, j)
+            pushforward_dresiduals!(view(jacobian, :, k += 1), ev, b)
+        end
+    end
+
+    # Compute derivatives with respect to b.
+    for i = 1:s
+        k += 1
+        @inbounds for (j, m) in pairs(ev.table.selected_indices)
+            jacobian[j, k] = ev.Phi[i, m]
+        end
+    end
+
+    return jacobian
+end
+
+
 ######################################################### DIAGONALLY IMPLICIT AO
 
 
@@ -432,6 +524,51 @@ function (param::RKParameterizationImplicit{T})(
     end
 
     return x
+end
+
+
+function (param::RKParameterizationImplicit{T})(
+    jacobian::AbstractMatrix{T},
+    A::AbstractMatrix{T},
+    b::AbstractVector{T},
+    ev::AbstractRKOCEvaluator{T},
+    x::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    s = param.num_stages
+    stage_axis, _, output_axis = get_axes(ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        Base.require_one_based_indexing(jacobian, A, b, x)
+        @assert size(jacobian) == (length(output_axis), param.num_variables)
+        @assert size(A) == (s, s)
+        @assert size(b) == (s,)
+        @assert size(x) == (param.num_variables,)
+        @assert size(stage_axis) == (s,)
+    end
+
+    # Compute Butcher weight vectors.
+    param(A, b, x)
+    compute_Phi!(ev, A)
+
+    # Compute derivatives with respect to the lower-triangular part of A.
+    k = 0
+    for i = 1:s
+        for j = 1:s
+            pushforward_dPhi!(ev, A, i, j)
+            pushforward_dresiduals!(view(jacobian, :, k += 1), ev, b)
+        end
+    end
+
+    # Compute derivatives with respect to b.
+    for i = 1:s
+        k += 1
+        @inbounds for (j, m) in pairs(ev.table.selected_indices)
+            jacobian[j, k] = ev.Phi[i, m]
+        end
+    end
+
+    return jacobian
 end
 
 
@@ -601,9 +738,6 @@ function (param::RKParameterizationParallelExplicit{T})(
         @assert size(b) == (s,)
     end
 
-    # Construct numeric constants.
-    _zero = zero(T)
-
     # Iterate over lower-triangular blocks of A.
     i = 1
     offset = 0
@@ -624,6 +758,56 @@ function (param::RKParameterizationParallelExplicit{T})(
     end
 
     return x
+end
+
+
+function (param::RKParameterizationParallelExplicit{T})(
+    jacobian::AbstractMatrix{T},
+    A::AbstractMatrix{T},
+    b::AbstractVector{T},
+    ev::AbstractRKOCEvaluator{T},
+    x::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    s = param.num_stages
+    stage_axis, _, output_axis = get_axes(ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        Base.require_one_based_indexing(jacobian, A, b, x)
+        @assert size(jacobian) == (length(output_axis), param.num_variables)
+        @assert size(A) == (s, s)
+        @assert size(b) == (s,)
+        @assert size(x) == (param.num_variables,)
+        @assert size(stage_axis) == (s,)
+    end
+
+    # Compute Butcher weight vectors.
+    param(A, b, x)
+    compute_Phi!(ev, A)
+
+    # Compute derivatives with respect to lower-triangular blocks of A.
+    i = 1
+    k = 0
+    for parallel_stage = 1:param.num_parallel_stages
+        row_length = 1 + (parallel_stage - 1) * param.parallel_width
+        for _ = 1:param.parallel_width
+            i += 1
+            for j = 1:row_length
+                pushforward_dPhi!(ev, A, i, j)
+                pushforward_dresiduals!(view(jacobian, :, k += 1), ev, b)
+            end
+        end
+    end
+
+    # Compute derivatives with respect to b.
+    for i = 1:s
+        k += 1
+        @inbounds for (j, m) in pairs(ev.table.selected_indices)
+            jacobian[j, k] = ev.Phi[i, m]
+        end
+    end
+
+    return jacobian
 end
 
 
