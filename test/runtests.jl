@@ -211,13 +211,13 @@ using RungeKuttaToolKit.RKParameterization
         @test x == BigFloat.(1:6)
     end
     let
-        A = RKParameterizationExplicitQR{BigFloat}(3)(
+        A = RKParameterizationExplicitAO{BigFloat}(3)(
             Matrix{BigFloat}(undef, 3, 3),
             BigFloat.(1:3))
         @test A == BigFloat[0 0 0; 1 0 0; 2 3 0]
     end
     let
-        x = RKParameterizationExplicitQR{BigFloat}(3)(
+        x = RKParameterizationExplicitAO{BigFloat}(3)(
             Vector{BigFloat}(undef, 3),
             BigFloat[0 0 0; 1 0 0; 2 3 0])
         @test x == BigFloat.(1:3)
@@ -238,13 +238,13 @@ using RungeKuttaToolKit.RKParameterization
         @test x == BigFloat.(1:9)
     end
     let
-        A = RKParameterizationDiagonallyImplicitQR{BigFloat}(3)(
+        A = RKParameterizationDiagonallyImplicitAO{BigFloat}(3)(
             Matrix{BigFloat}(undef, 3, 3),
             BigFloat.(1:6))
         @test A == BigFloat[1 0 0; 2 3 0; 4 5 6]
     end
     let
-        x = RKParameterizationDiagonallyImplicitQR{BigFloat}(3)(
+        x = RKParameterizationDiagonallyImplicitAO{BigFloat}(3)(
             Vector{BigFloat}(undef, 6),
             BigFloat[1 0 0; 2 3 0; 4 5 6])
         @test x == BigFloat.(1:6)
@@ -265,13 +265,13 @@ using RungeKuttaToolKit.RKParameterization
         @test x == BigFloat.(1:12)
     end
     let
-        A = RKParameterizationImplicitQR{BigFloat}(3)(
+        A = RKParameterizationImplicitAO{BigFloat}(3)(
             Matrix{BigFloat}(undef, 3, 3),
             BigFloat.(1:9))
         @test A == BigFloat[1 2 3; 4 5 6; 7 8 9]
     end
     let
-        x = RKParameterizationImplicitQR{BigFloat}(3)(
+        x = RKParameterizationImplicitAO{BigFloat}(3)(
             Vector{BigFloat}(undef, 9),
             BigFloat[1 2 3; 4 5 6; 7 8 9])
         @test x == BigFloat.(1:9)

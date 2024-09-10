@@ -2,10 +2,10 @@ module RKParameterization
 
 
 using ..RungeKuttaToolKit: PERFORM_INTERNAL_BOUNDS_CHECKS,
-    AbstractRKParameterization, AbstractRKParameterizationQR
+    AbstractRKParameterization, AbstractRKParameterizationAO
 
 
-export AbstractRKParameterization, AbstractRKParameterizationQR
+export AbstractRKParameterization, AbstractRKParameterizationAO
 
 
 ####################################################################### EXPLICIT
@@ -100,27 +100,27 @@ function (param::RKParameterizationExplicit{T})(
 end
 
 
-#################################################################### EXPLICIT QR
+#################################################################### EXPLICIT AO
 
 
-export RKParameterizationExplicitQR
+export RKParameterizationExplicitAO
 
 
-struct RKParameterizationExplicitQR{T} <: AbstractRKParameterizationQR{T}
+struct RKParameterizationExplicitAO{T} <: AbstractRKParameterizationAO{T}
 
     num_stages::Int
     num_variables::Int
 
-    @inline RKParameterizationExplicitQR{T}(s::Integer) where {T} =
+    @inline RKParameterizationExplicitAO{T}(s::Integer) where {T} =
         new{T}(s, (s * (s - 1)) >> 1)
 end
 
 
-@inline RKParameterizationExplicitQR(s::Integer) =
-    RKParameterizationExplicitQR{Float64}(s)
+@inline RKParameterizationExplicitAO(s::Integer) =
+    RKParameterizationExplicitAO{Float64}(s)
 
 
-function (param::RKParameterizationExplicitQR{T})(
+function (param::RKParameterizationExplicitAO{T})(
     A::AbstractMatrix{T},
     x::AbstractVector{T},
 ) where {T}
@@ -152,7 +152,7 @@ function (param::RKParameterizationExplicitQR{T})(
 end
 
 
-function (param::RKParameterizationExplicitQR{T})(
+function (param::RKParameterizationExplicitAO{T})(
     x::AbstractVector{T},
     A::AbstractMatrix{T},
 ) where {T}
@@ -270,28 +270,28 @@ function (param::RKParameterizationDiagonallyImplicit{T})(
 end
 
 
-######################################################### DIAGONALLY IMPLICIT QR
+######################################################### DIAGONALLY IMPLICIT AO
 
 
-export RKParameterizationDiagonallyImplicitQR
+export RKParameterizationDiagonallyImplicitAO
 
 
-struct RKParameterizationDiagonallyImplicitQR{T} <:
-       AbstractRKParameterizationQR{T}
+struct RKParameterizationDiagonallyImplicitAO{T} <:
+       AbstractRKParameterizationAO{T}
 
     num_stages::Int
     num_variables::Int
 
-    @inline RKParameterizationDiagonallyImplicitQR{T}(s::Integer) where {T} =
+    @inline RKParameterizationDiagonallyImplicitAO{T}(s::Integer) where {T} =
         new{T}(s, (s * (s + 1)) >> 1)
 end
 
 
-@inline RKParameterizationDiagonallyImplicitQR(s::Integer) =
-    RKParameterizationDiagonallyImplicitQR{Float64}(s)
+@inline RKParameterizationDiagonallyImplicitAO(s::Integer) =
+    RKParameterizationDiagonallyImplicitAO{Float64}(s)
 
 
-function (param::RKParameterizationDiagonallyImplicitQR{T})(
+function (param::RKParameterizationDiagonallyImplicitAO{T})(
     A::AbstractMatrix{T},
     x::AbstractVector{T},
 ) where {T}
@@ -323,7 +323,7 @@ function (param::RKParameterizationDiagonallyImplicitQR{T})(
 end
 
 
-function (param::RKParameterizationDiagonallyImplicitQR{T})(
+function (param::RKParameterizationDiagonallyImplicitAO{T})(
     x::AbstractVector{T},
     A::AbstractMatrix{T},
 ) where {T}
@@ -435,27 +435,27 @@ function (param::RKParameterizationImplicit{T})(
 end
 
 
-#################################################################### IMPLICIT QR
+#################################################################### IMPLICIT AO
 
 
-export RKParameterizationImplicitQR
+export RKParameterizationImplicitAO
 
 
-struct RKParameterizationImplicitQR{T} <: AbstractRKParameterizationQR{T}
+struct RKParameterizationImplicitAO{T} <: AbstractRKParameterizationAO{T}
 
     num_stages::Int
     num_variables::Int
 
-    @inline RKParameterizationImplicitQR{T}(s::Integer) where {T} =
+    @inline RKParameterizationImplicitAO{T}(s::Integer) where {T} =
         new{T}(s, s * s)
 end
 
 
-@inline RKParameterizationImplicitQR(s::Integer) =
-    RKParameterizationImplicitQR{Float64}(s)
+@inline RKParameterizationImplicitAO(s::Integer) =
+    RKParameterizationImplicitAO{Float64}(s)
 
 
-function (param::RKParameterizationImplicitQR{T})(
+function (param::RKParameterizationImplicitAO{T})(
     A::AbstractMatrix{T},
     x::AbstractVector{T},
 ) where {T}
@@ -481,7 +481,7 @@ function (param::RKParameterizationImplicitQR{T})(
 end
 
 
-function (param::RKParameterizationImplicitQR{T})(
+function (param::RKParameterizationImplicitAO{T})(
     x::AbstractVector{T},
     A::AbstractMatrix{T},
 ) where {T}

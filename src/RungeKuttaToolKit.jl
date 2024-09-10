@@ -8,16 +8,16 @@ const NULL_INDEX = typemin(Int)
 include("ButcherInstructions.jl")
 
 
-const PERFORM_INTERNAL_BOUNDS_CHECKS = false
+const PERFORM_INTERNAL_BOUNDS_CHECKS = true
 abstract type AbstractRKParameterization{T} end
-abstract type AbstractRKParameterizationQR{T} end
+abstract type AbstractRKParameterizationAO{T} end
 include("RKParameterization.jl")
 
 
 abstract type AbstractRKOCEvaluator{T} end
-abstract type AbstractRKOCEvaluatorQR{T} end
+abstract type AbstractRKOCEvaluatorAO{T} end
 abstract type AbstractRKOCAdjoint{T} end
-abstract type AbstractRKOCAdjointQR{T} end
+abstract type AbstractRKOCAdjointAO{T} end
 abstract type AbstractRKCost{T} end
 function get_axes end
 function compute_residual end
@@ -34,7 +34,7 @@ export LevelSequence, ButcherInstruction, ButcherInstructionTable,
 ####################################################### EVALUATOR DATA STRUCTURE
 
 
-export RKOCEvaluator, RKOCEvaluatorQR
+export RKOCEvaluator, RKOCEvaluatorAO
 
 
 struct RKOCEvaluator{T} <: AbstractRKOCEvaluator{T}
@@ -45,7 +45,7 @@ struct RKOCEvaluator{T} <: AbstractRKOCEvaluator{T}
 end
 
 
-struct RKOCEvaluatorQR{T} <: AbstractRKOCEvaluatorQR{T}
+struct RKOCEvaluatorAO{T} <: AbstractRKOCEvaluatorAO{T}
     table::ButcherInstructionTable
     Phi::Matrix{T}
     dPhi::Matrix{T}
