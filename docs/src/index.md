@@ -92,3 +92,11 @@ ev(residuals, A, b)
 ```@docs
 RKOCEvaluator
 ```
+
+```@docs
+RungeKuttaToolKit.AbstractRKOCEvaluator
+```
+
+```@docs
+RungeKuttaToolKit.AbstractRKOCAdjoint
+```

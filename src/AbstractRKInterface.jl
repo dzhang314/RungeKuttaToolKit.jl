@@ -71,15 +71,15 @@ end
         b::AbstractVector{T},
     ) -> T
 
-Compute a specified cost function of the
+Compute a specified cost function ``f`` of the
 residuals of the Runge--Kutta order conditions
-``\\{ \\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t) : t \\in T \\}``
+``f(\\{ \\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t) : t \\in T \\})``
 for a given Butcher tableau ``(A, \\mathbf{b})``
 over a set of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
 
 # Arguments
 - `ev`: `AbstractRKOCEvaluator` object encoding a set of rooted trees.
-- `cost`: `AbstractRKCost` object specifying the cost function to evaluate.
+- `cost`: `AbstractRKCost` object specifying the cost function ``f``.
 - `A`: ``s \\times s`` input matrix containing the coefficients of a
     Runge--Kutta method (i.e., the upper-right block of a Butcher tableau).
 - `b`: length ``s`` input vector containing the weights of a Runge--Kutta
@@ -122,13 +122,13 @@ over a set of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
 # Arguments
 - `adj`: `AbstractRKOCAdjoint` object obtained by applying the adjoint
     operator `'` to an `AbstractRKOCEvaluator`. In other words, this function
-    should be called as `ev'(dresiduals, A, dA, b, db)` where `ev` is an
+    should be called as `ev'([dresiduals,] A, dA, b, db)` where `ev` is an
     `AbstractRKOCEvaluator`.
 - `dresiduals`: length ``|T|`` output vector. Each directional derivative
     ``\\nabla_{\\mathrm{d}A, \\mathrm{d}\\mathbf{b}} [
     \\mathbf{b} \\cdot \\Phi_t(A) ]`` is written to `dresiduals[i]` in the
-    order specified when constructing `ev`.
-    If not provided, a new vector is allocated and returned.
+    order specified when constructing `ev`. If not provided, a new vector is
+    allocated and returned.
 - `A`: ``s \\times s`` input matrix containing the coefficients of a
     Runge--Kutta method (i.e., the upper-right block of a Butcher tableau).
 - `dA`: ``s \\times s`` input matrix containing the direction in which to
@@ -198,7 +198,7 @@ over a set of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
 # Arguments
 - `adj`: `AbstractRKOCAdjoint` object obtained by applying the adjoint
     operator `'` to an `AbstractRKOCEvaluator`. In other words, this function
-    should be called as `ev'(dresiduals, A, dA, b, db)` where `ev` is an
+    should be called as `ev'([dresiduals,] A, dA, b, db)` where `ev` is an
     `AbstractRKOCEvaluator`.
 - `dresiduals`: length ``|T|`` output vector. Each partial derivative
     ``\\partial_{A_{i,j}} [ \\mathbf{b} \\cdot \\Phi_t(A) ]`` is written to
@@ -275,7 +275,7 @@ over a set of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
 # Arguments
 - `adj`: `AbstractRKOCAdjoint` object obtained by applying the adjoint
     operator `'` to an `AbstractRKOCEvaluator`. In other words, this function
-    should be called as `ev'(dresiduals, A, dA, b, db)` where `ev` is an
+    should be called as `ev'([dresiduals,] A, dA, b, db)` where `ev` is an
     `AbstractRKOCEvaluator`.
 - `dresiduals`: length ``|T|`` output vector. Each partial derivative
     ``\\partial_{b_i} [ \\mathbf{b} \\cdot \\Phi_t(A) ]`` is written to
@@ -331,35 +331,39 @@ function (adj::AbstractRKOCAdjoint{T})(
 end
 
 
-# """
-#     (adj::RKOCAdjoint{T})(
-#         dA::AbstractMatrix{T},
-#         db::AbstractVector{T},
-#         A::AbstractMatrix{T},
-#         b::AbstractVector{T},
-#     ) -> Tuple{AbstractMatrix{T}, AbstractVector{T}}
+"""
+    (adj::AbstractRKOCAdjoint{T})(
+        [dA::AbstractMatrix{T},
+         db::AbstractVector{T},]
+        cost::AbstractRKCost{T},
+        A::AbstractMatrix{T},
+        b::AbstractVector{T},
+    ) -> Tuple{AbstractMatrix{T}, AbstractVector{T}}
 
-# Compute the gradient of the sum of squared residuals
-# of the Runge--Kutta order conditions ``\\nabla_{A, \\mathbf{b}}
-# \\sum_{t \\in T} (\\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t))^2``
-# at a given Butcher tableau ``(A, \\mathbf{b})``
-# over a set of rooted trees ``T`` encoded by an `RKOCEvaluator`.
+Compute the gradient of a specified cost function ``f`` of the residuals
+of the Runge--Kutta order conditions ``\\nabla_{A, \\mathbf{b}}
+f(\\{ \\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t) : t \\in T \\})``
+at a given Butcher tableau ``(A, \\mathbf{b})``
+over a set of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
 
-# # Arguments
-# - `adj`: `RKOCAdjoint` object obtained by applying the adjoint operator `'`
-#     to an `RKOCEvaluator`. In other words, this function should be called as
-#     `ev'(dA, db, A, b)` where `ev` is an `RKOCEvaluator`.
-# - `dA`: ``s \\times s`` output matrix containing the gradient of the sum of
-#     squared residuals with respect to ``A``.
-# - `db`: length ``s`` output vector containing the gradient of the sum of
-#     squared residuals with respect to ``\\mathbf{b}``.
-# - `A`: ``s \\times s`` input matrix containing the coefficients of a
-#     Runge--Kutta method (i.e., the upper-right block of a Butcher tableau).
-# - `b`: length ``s`` input vector containing the weights of a Runge--Kutta
-#     method (i.e., the lower-right row of a Butcher tableau).
+# Arguments
+- `adj`: `AbstractRKOCAdjoint` object obtained by applying the adjoint
+    operator `'` to an `AbstractRKOCEvaluator`. In other words, this function
+    should be called as `ev'([dA, db,] cost, A, b)` where `ev` is an
+    `AbstractRKOCEvaluator`.
+- `dA`: ``s \\times s`` output matrix containing the gradient of ``f`` with
+    respect to ``A``. If not provided, a new matrix is allocated and returned.
+- `db`: length ``s`` output vector containing the gradient of ``f`` with
+    respect to ``\\mathbf{b}``. If not provided, a new vector is allocated
+    and returned.
+- `cost`: `AbstractRKCost` object specifying the cost function ``f``.
+- `A`: ``s \\times s`` input matrix containing the coefficients of a
+    Runge--Kutta method (i.e., the upper-right block of a Butcher tableau).
+- `b`: length ``s`` input vector containing the weights of a Runge--Kutta
+    method (i.e., the lower-right row of a Butcher tableau).
 
-# Here, ``s`` denotes the number of stages specified when constructing `ev`.
-# """
+Here, ``s`` denotes the number of stages specified when constructing `ev`.
+"""
 function (adj::AbstractRKOCAdjoint{T})(
     dA::AbstractMatrix{T},
     db::AbstractVector{T},
@@ -400,6 +404,47 @@ function (adj::AbstractRKOCAdjoint{T})(
 end
 
 
+"""
+    (adj::AbstractRKOCAdjoint{T})(
+        [jacobian::AbstractMatrix{T},
+         A::AbstractMatrix{T},
+         b::AbstractVector{T},]
+        param::AbstractRKParameterization{T},
+        x::AbstractVector{T},
+    ) -> AbstractMatrix{T}
+
+Compute the Jacobian matrix of the residuals of the Runge--Kutta order
+conditions ``\\nabla_{\\mathbf{x}} \\{ \\mathbf{b}(\\mathbf{x}) \\cdot
+\\Phi_t(A(\\mathbf{x})) - 1/\\gamma(t) : t \\in T \\}``
+with respect to a specified Butcher tableau parameterization ``\\mathbf{x}
+\\in \\mathbb{R}^n \\mapsto (A(\\mathbf{x}), \\mathbf{b}(\\mathbf{x}))``
+over a set of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
+
+# Arguments
+- `adj`: `AbstractRKOCAdjoint` object obtained by applying the adjoint
+    operator `'` to an `AbstractRKOCEvaluator`. In other words, this function
+    should be called as `ev'([jacobian, A, b,] param, x)` where `ev` is an
+    `AbstractRKOCEvaluator`.
+- `jacobian`: ``|T| \\times n`` output matrix. The partial derivative of the
+    ``i``th residual with respect to the ``j``th coordinate of ``\\mathbf{x}``
+    is written to `jacobian[i, j]`. If not provided, a new matrix is allocated
+    and returned.
+- `A`: ``s \\times s`` output matrix containing the output
+    ``A(\\mathbf{x})`` of the Butcher tableau parameterization.
+    If not provided, a new temporary matrix is allocated.
+- `b`: length ``s`` output vector containing the output
+    ``\\mathbf{b}(\\mathbf{x})`` of the Butcher tableau parameterization.
+    If not provided, a new temporary vector is allocated.
+- `param`: `AbstractRKParameterization` object specifying a Butcher tableau
+    parameterization, i.e., a mapping from a vector of parameters
+    ``\\mathbf{x} \\in \\mathbb{R}^n`` to a Butcher tableau
+    ``(A(\\mathbf{x}), \\mathbf{b}(\\mathbf{x}))``.
+- `x`: length ``n`` input vector containing the parameters ``\\mathbf{x}``.
+
+Here, ``|T|`` denotes the number of rooted trees encoded by `ev`,
+``s`` denotes the number of stages specified when constructing `ev`,
+and ``n`` denotes the number of free parameters in `param`.
+"""
 function (adj::AbstractRKOCAdjoint{T})(
     jacobian::AbstractMatrix{T},
     A::AbstractMatrix{T},
