@@ -10,7 +10,7 @@ const WEBSITE_DIR = joinpath(homedir(),
     "Documents", "GitHub", "dzhang314.github.com")
 
 trymkpidlock(".docslock") do
-    makedocs(sitename="Documentation", format=Documenter.HTML(;
+    makedocs(sitename="RungeKuttaToolKit.jl", format=Documenter.HTML(;
         mathengine=Documenter.KaTeX(Dict(:macros => Dict(
             "\\N" => "\\mathbb{N}",
             "\\R" => "\\mathbb{R}",
