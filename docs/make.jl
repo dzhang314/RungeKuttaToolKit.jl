@@ -3,6 +3,8 @@ using FileWatching.Pidfile
 
 push!(LOAD_PATH, "../src")
 using RungeKuttaToolKit
+using RungeKuttaToolKit.RKCost
+using RungeKuttaToolKit.RKParameterization
 
 const WEBSITE_DIR = joinpath(homedir(),
     "Documents", "GitHub", "dzhang314.github.com")

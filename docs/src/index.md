@@ -53,45 +53,51 @@ println(error_coeffs) # This computes the principal error
 
 
 
-## Usage
+## Generating Rooted Trees
 
-```julia
-ev = RKOCEvaluator(order::Integer, num_stages::Integer) # T = Float64
-ev = RKOCEvaluator{T}(order::Integer, num_stages::Integer)
+The first step in using **RungeKuttaToolKit.jl** is generating a list of rooted trees. Each Runge--Kutta order condition ``\mathbf{b} \cdot \Phi_t(A) = 1/\gamma(t)`` corresponds to a rooted tree ``t``. For a Runge--Kutta method ``(A, \mathbf{b})`` to have order ``p``, it needs to satisfy this equation for all rooted trees ``t`` having up to ``p`` vertices.
+
+**RungeKuttaToolKit.jl** provides two functions for generating rooted trees: `rooted_trees(n)`, which generates all rooted trees with **exactly** ``n`` vertices, and `all_rooted_trees(n)`, which generates all rooted trees with **at most** ``n`` vertices.
+
+```@docs
+rooted_trees
 ```
 
-The type `T` needs to support `+`, `-`, `*`, and `inv`
-
-```julia
-trees = rooted_trees(n::Integer)
-trees = rooted_trees(n::Integer; tree_ordering::Symbol)
-```
-
-**RungeKuttaToolKit.jl** supports several methods for generating rooted trees
-
-- `:reverse_lexicographic` is the default and most efficient ordering, which uses a [fast algorithm by Terry Beyer and Sandra Mitchell Hedetniemi](https://epubs.siam.org/doi/pdf/10.1137/0209055) to generate rooted trees in constant time per tree.
-- `:lexicographic`:
-- `:attach` generates rooted trees of order ``n`` by attaching a leaf in all possible positions to all rooted trees of order ``n-1``, starting by attaching a leaf to the root and proceeding depth-first. This is the ordering usually produced by paper-and-pencil application of the product rule to the set of elementary differentials.
-- `:butcher` uses [Algorithm 3](https://link.springer.com/content/pdf/10.1007/978-3-030-70956-3_2) from [John Butcher's monograph on B-Series](https://link.springer.com/content/pdf/10.1007/978-3-030-70956-3.pdf) to generate rooted trees in lexicographic order. This is the ordering that would be produced by manually applying the product rule to the set of elementary differentials, but it is slower than `:attach`.
-
-
-```julia
-ev = RKOCEvaluator(trees::AbstractVector{LevelSequence}, num_stages::Integer) # T = Float64
-ev = RKOCEvaluator{T}(trees::AbstractVector{LevelSequence}, num_stages::Integer)
+```@docs
+all_rooted_trees
 ```
 
 
 
-```julia
-residuals = ev(A, b)
-ev(residuals, A, b)
-```
+## `RKOCEvaluator` Construction
 
-
+With a list of rooted trees in hand, we can construct an `RKOCEvaluator` object, which is used to evaluate the residuals and gradients of the Runge--Kutta order conditions with respect to the entries of ``A`` and ``\mathbf{b}``. The `RKOCEvaluator` constructor analyzes the given list of rooted trees to identify common subtrees whose Butcher weight vectors ``\Phi_t(A)`` can be reused to eliminate redundant computation.
 
 ```@docs
 RKOCEvaluator
 ```
+
+
+
+## `RKOCEvaluator` Usage
+
+An `RKOCEvaluator` object can be used to perform seven operations which are summarized below. A full description of each operation follows the summary.
+
+- `ev([residuals,] A, b)`: Compute residuals.
+- `ev(cost, A, b)`: Compute cost function.
+- `ev'([dresiduals,] A, dA, b, db)`: Compute directional derivatives.
+     of residuals
+- `ev'([dresiduals,] A, i, j, b)`: Compute partial derivatives of residuals.
+     with respect to ``A_{i,j}``
+- `ev'([dresiduals,] A, i)`: Compute partial derivatives of residuals.
+     with respect to ``b_i``
+- `ev'([dA, db,] cost, A, b)`: Compute gradient of cost function.
+- `ev'([jacobian, A, b,] param, x)`: Compute Jacobian of residuals
+     with respect to parameterization.
+
+Every operation that returns a matrix or vector has an **allocating version** that returns its result in a new array and an **in-place version** that writes its result to an existing array. We use square brackets to denote optional output arguments. For example, the operation `ev([residuals,] A, b)` can be called as `ev(A, b)` (allocating) or `ev(residuals, A, b)` (in-place).
+
+As a mnemonic device, the operations that compute derivatives are called with a single quote `'` following the `RKOCEvaluator` object, emulating the prime symbol ``f'(x)`` used to denote derivatives in mathematical notation. This distinguishes operations like `ev(cost, A, b)` and `ev'(cost, A, b)` that would otherwise have identical function signatures.
 
 ```@docs
 RungeKuttaToolKit.AbstractRKOCEvaluator
@@ -99,4 +105,64 @@ RungeKuttaToolKit.AbstractRKOCEvaluator
 
 ```@docs
 RungeKuttaToolKit.AbstractRKOCAdjoint
+```
+
+
+
+## Cost Functions
+
+```@docs
+RKCostL1
+```
+
+```@docs
+RKCostWeightedL1
+```
+
+```@docs
+RKCostL2
+```
+
+```@docs
+RKCostWeightedL2
+```
+
+```@docs
+RKCostLInfinity
+```
+
+Derivatives are not yet implemented for `RKCostLInfinity`.
+
+```@docs
+RKCostWeightedLInfinity
+```
+
+Derivatives are not yet implemented for `RKCostWeightedLInfinity`.
+
+```@docs
+RKCostHuber
+```
+
+```@docs
+RKCostWeightedHuber
+```
+
+
+
+## Parameterizations
+
+```@docs
+RKParameterizationExplicit
+```
+
+```@docs
+RKParameterizationDiagonallyImplicit
+```
+
+```@docs
+RKParameterizationImplicit
+```
+
+```@docs
+RKParameterizationParallelExplicit
 ```

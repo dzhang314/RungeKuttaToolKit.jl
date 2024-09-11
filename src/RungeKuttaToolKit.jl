@@ -70,12 +70,14 @@ end
         num_stages::Integer,
     ) -> RKOCEvaluator{T}
 
-Construct an `RKOCEvaluator` that encodes a given sequence of rooted trees.
+Construct an `RKOCEvaluator` that encodes a given list of rooted trees.
 
 # Arguments
-- `trees`: input vector of rooted trees in `LevelSequence` representation.
+- `trees`: input list of rooted trees in `LevelSequence` representation.
 - `num_stages`: number of stages (i.e., size of the Butcher tableau). Must be
     specified at construction time to allocate internal workspace arrays.
+
+If the type `T` is not specified, it defaults to `Float64`.
 """
 function RKOCEvaluator{T}(
     trees::AbstractVector{LevelSequence},
@@ -96,11 +98,11 @@ RKOCEvaluator(trees::AbstractVector{LevelSequence}, num_stages::Integer) =
 """
     RKOCEvaluator{T}(order::Integer, num_stages::Integer) -> RKOCEvaluator{T}
 
-Construct an `RKOCEvaluator` that encodes all rooted trees having at most
-`order` vertices.
+Construct an `RKOCEvaluator` that encodes all rooted trees
+having at most `order` vertices. This is equivalent to
+`RKOCEvaluator{T}(all_rooted_trees(order), num_stages)`.
 
-By default, rooted trees are generated in graded reverse lexicographic order.
-This specific ordering maximizes the efficiency of generating all rooted trees.
+If the type `T` is not specified, it defaults to `Float64`.
 """
 RKOCEvaluator{T}(order::Integer, num_stages::Integer) where {T} =
     RKOCEvaluator{T}(all_rooted_trees(order), num_stages)

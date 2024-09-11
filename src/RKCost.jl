@@ -16,6 +16,13 @@ export AbstractRKCost
 export RKCostL1
 
 
+"""
+```math
+\\sum_{t \\in T} \\left\\lvert
+\\mathbf{b} \\cdot \\Phi_t(A) - \\frac{1}{\\gamma(t)}
+\\right\\rvert
+```
+"""
 struct RKCostL1{T} <: AbstractRKCost{T} end
 
 
@@ -148,6 +155,13 @@ end
 export RKCostWeightedL1
 
 
+"""
+```math
+\\sum_{t \\in T} w_t \\left\\lvert
+\\mathbf{b} \\cdot \\Phi_t(A) - \\frac{1}{\\gamma(t)}
+\\right\\rvert
+```
+"""
 struct RKCostWeightedL1{T} <: AbstractRKCost{T}
     weights::Vector{T}
 end
@@ -284,6 +298,13 @@ end
 export RKCostL2
 
 
+"""
+```math
+\\sum_{t \\in T} \\left(
+\\mathbf{b} \\cdot \\Phi_t(A) - \\frac{1}{\\gamma(t)}
+\\right)^2
+```
+"""
 struct RKCostL2{T} <: AbstractRKCost{T} end
 
 
@@ -384,6 +405,13 @@ end
 export RKCostWeightedL2
 
 
+"""
+```math
+\\sum_{t \\in T} w_t \\left(
+\\mathbf{b} \\cdot \\Phi_t(A) - \\frac{1}{\\gamma(t)}
+\\right)^2
+```
+"""
 struct RKCostWeightedL2{T} <: AbstractRKCost{T}
     weights::Vector{T}
 end
@@ -486,6 +514,13 @@ end
 export RKCostLInfinity
 
 
+"""
+```math
+\\max_{t \\in T} \\left\\lvert
+\\mathbf{b} \\cdot \\Phi_t(A) - \\frac{1}{\\gamma(t)}
+\\right\\rvert
+```
+"""
 struct RKCostLInfinity{T} <: AbstractRKCost{T} end
 
 
@@ -519,6 +554,13 @@ end
 export RKCostWeightedLInfinity
 
 
+"""
+```math
+\\max_{t \\in T} w_t \\left\\lvert
+\\mathbf{b} \\cdot \\Phi_t(A) - \\frac{1}{\\gamma(t)}
+\\right\\rvert
+```
+"""
 struct RKCostWeightedLInfinity{T} <: AbstractRKCost{T}
     weights::Vector{T}
 end
@@ -552,6 +594,19 @@ end
 export RKCostHuber
 
 
+"""
+```math
+\\sum_{t \\in T} H_\\delta\\!\\left(
+\\mathbf{b} \\cdot \\Phi_t(A) - \\frac{1}{\\gamma(t)}
+\\right)
+```
+```math
+H_\\delta(x) = \\begin{cases}
+x^2 & \\text{if } \\lvert x \\rvert \\leq \\delta \\\\
+2 \\delta \\lvert x \\rvert - \\delta^2 & \\text{otherwise}
+\\end{cases}
+```
+"""
 struct RKCostHuber{T} <: AbstractRKCost{T}
     delta::T
 end
@@ -672,6 +727,19 @@ end
 export RKCostWeightedHuber
 
 
+"""
+```math
+\\sum_{t \\in T} w_t H_\\delta\\!\\left(
+\\mathbf{b} \\cdot \\Phi_t(A) - \\frac{1}{\\gamma(t)}
+\\right)
+```
+```math
+H_\\delta(x) = \\begin{cases}
+x^2 & \\text{if } \\lvert x \\rvert \\leq \\delta \\\\
+2 \\delta \\lvert x \\rvert - \\delta^2 & \\text{otherwise}
+\\end{cases}
+```
+"""
 struct RKCostWeightedHuber{T} <: AbstractRKCost{T}
     delta::T
     weights::Vector{T}

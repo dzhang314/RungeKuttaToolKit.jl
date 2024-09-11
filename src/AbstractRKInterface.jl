@@ -17,10 +17,10 @@ using ..RungeKuttaToolKit: AbstractRKOCEvaluator, AbstractRKOCAdjoint,
 Compute residuals of the Runge--Kutta order conditions
 ``\\{ \\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t) : t \\in T \\}``
 for a given Butcher tableau ``(A, \\mathbf{b})``
-over a set of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
+over a list of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
 
 # Arguments
-- `ev`: `AbstractRKOCEvaluator` object encoding a set of rooted trees.
+- `ev`: `AbstractRKOCEvaluator` object encoding a list of rooted trees.
 - `residuals`: length ``|T|`` output vector. Each residual
     ``\\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t)`` is written to
     `residuals[i]` in the order specified when constructing `ev`.
@@ -75,10 +75,10 @@ Compute a specified cost function ``f`` of the
 residuals of the Runge--Kutta order conditions
 ``f(\\{ \\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t) : t \\in T \\})``
 for a given Butcher tableau ``(A, \\mathbf{b})``
-over a set of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
+over a list of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
 
 # Arguments
-- `ev`: `AbstractRKOCEvaluator` object encoding a set of rooted trees.
+- `ev`: `AbstractRKOCEvaluator` object encoding a list of rooted trees.
 - `cost`: `AbstractRKCost` object specifying the cost function ``f``.
 - `A`: ``s \\times s`` input matrix containing the coefficients of a
     Runge--Kutta method (i.e., the upper-right block of a Butcher tableau).
@@ -117,7 +117,7 @@ Compute directional derivatives of the Runge--Kutta order conditions
 \\mathbf{b} \\cdot \\Phi_t(A) ] : t \\in T \\}``
 at a given Butcher tableau ``(A, \\mathbf{b})``
 in direction ``(\\mathrm{d}A, \\mathrm{d}\\mathbf{b})``
-over a set of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
+over a list of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
 
 # Arguments
 - `adj`: `AbstractRKOCAdjoint` object obtained by applying the adjoint
@@ -193,7 +193,7 @@ end
 Compute partial derivatives of the Runge--Kutta order conditions
 ``\\{ \\partial_{A_{i,j}} [ \\mathbf{b} \\cdot \\Phi_t(A) ] : t \\in T \\}``
 with respect to ``A_{i,j}`` at a given Butcher tableau ``(A, \\mathbf{b})``
-over a set of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
+over a list of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
 
 # Arguments
 - `adj`: `AbstractRKOCAdjoint` object obtained by applying the adjoint
@@ -269,7 +269,7 @@ end
 Compute partial derivatives of the Runge--Kutta order conditions
 ``\\{ \\partial_{b_i} [ \\mathbf{b} \\cdot \\Phi_t(A) ] : t \\in T \\}``
 with respect to ``b_i`` at a given Butcher tableau ``A``
-over a set of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
+over a list of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
 (The result is independent of the value of ``\\mathbf{b}``.)
 
 # Arguments
@@ -344,7 +344,7 @@ Compute the gradient of a specified cost function ``f`` of the residuals
 of the Runge--Kutta order conditions ``\\nabla_{A, \\mathbf{b}}
 f(\\{ \\mathbf{b} \\cdot \\Phi_t(A) - 1/\\gamma(t) : t \\in T \\})``
 at a given Butcher tableau ``(A, \\mathbf{b})``
-over a set of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
+over a list of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
 
 # Arguments
 - `adj`: `AbstractRKOCAdjoint` object obtained by applying the adjoint
@@ -413,12 +413,12 @@ end
         x::AbstractVector{T},
     ) -> AbstractMatrix{T}
 
-Compute the Jacobian matrix of the residuals of the Runge--Kutta order
-conditions ``\\nabla_{\\mathbf{x}} \\{ \\mathbf{b}(\\mathbf{x}) \\cdot
+Compute the Jacobian of the residuals of the Runge--Kutta order conditions
+``\\nabla_{\\mathbf{x}} \\{ \\mathbf{b}(\\mathbf{x}) \\cdot
 \\Phi_t(A(\\mathbf{x})) - 1/\\gamma(t) : t \\in T \\}``
 with respect to a specified Butcher tableau parameterization ``\\mathbf{x}
 \\in \\mathbb{R}^n \\mapsto (A(\\mathbf{x}), \\mathbf{b}(\\mathbf{x}))``
-over a set of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
+over a list of rooted trees ``T`` encoded by an `AbstractRKOCEvaluator`.
 
 # Arguments
 - `adj`: `AbstractRKOCAdjoint` object obtained by applying the adjoint
