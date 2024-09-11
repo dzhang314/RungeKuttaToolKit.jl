@@ -199,90 +199,67 @@ using RungeKuttaToolKit.RKParameterization
 
 @testset "reshape operators" begin
     let
-        A, b = RKParameterizationExplicit{BigFloat}(3)(
-            Matrix{BigFloat}(undef, 3, 3),
-            Vector{BigFloat}(undef, 3),
-            BigFloat.(1:6))
+        A, b = RKParameterizationExplicit{BigFloat}(3)(BigFloat.(1:6))
         @test A == BigFloat[0 0 0; 1 0 0; 2 3 0]
         @test b == BigFloat.(4:6)
     end
     let
         x = RKParameterizationExplicit{BigFloat}(3)(
-            Vector{BigFloat}(undef, 6),
-            BigFloat[0 0 0; 1 0 0; 2 3 0],
-            BigFloat.(4:6))
+            BigFloat[0 0 0; 1 0 0; 2 3 0], BigFloat.(4:6))
         @test x == BigFloat.(1:6)
     end
     let
-        A = RKParameterizationExplicitAO{BigFloat}(3)(
-            Matrix{BigFloat}(undef, 3, 3),
-            BigFloat.(1:3))
+        A = RKParameterizationExplicitAO{BigFloat}(3)(BigFloat.(1:3))
         @test A == BigFloat[0 0 0; 1 0 0; 2 3 0]
     end
     let
         x = RKParameterizationExplicitAO{BigFloat}(3)(
-            Vector{BigFloat}(undef, 3),
             BigFloat[0 0 0; 1 0 0; 2 3 0])
         @test x == BigFloat.(1:3)
     end
     let
         A, b = RKParameterizationDiagonallyImplicit{BigFloat}(3)(
-            Matrix{BigFloat}(undef, 3, 3),
-            Vector{BigFloat}(undef, 3),
             BigFloat.(1:9))
         @test A == BigFloat[1 0 0; 2 3 0; 4 5 6]
         @test b == BigFloat.(7:9)
     end
     let
         x = RKParameterizationDiagonallyImplicit{BigFloat}(3)(
-            Vector{BigFloat}(undef, 9),
             BigFloat[1 0 0; 2 3 0; 4 5 6],
             BigFloat.(7:9))
         @test x == BigFloat.(1:9)
     end
     let
-        A = RKParameterizationDiagonallyImplicitAO{BigFloat}(3)(
-            Matrix{BigFloat}(undef, 3, 3),
-            BigFloat.(1:6))
+        A = RKParameterizationDiagonallyImplicitAO{BigFloat}(3)(BigFloat.(1:6))
         @test A == BigFloat[1 0 0; 2 3 0; 4 5 6]
     end
     let
         x = RKParameterizationDiagonallyImplicitAO{BigFloat}(3)(
-            Vector{BigFloat}(undef, 6),
             BigFloat[1 0 0; 2 3 0; 4 5 6])
         @test x == BigFloat.(1:6)
     end
     let
-        A, b = RKParameterizationImplicit{BigFloat}(3)(
-            Matrix{BigFloat}(undef, 3, 3),
-            Vector{BigFloat}(undef, 3),
-            BigFloat.(1:12))
+        A, b = RKParameterizationImplicit{BigFloat}(3)(BigFloat.(1:12))
         @test A == BigFloat[1 2 3; 4 5 6; 7 8 9]
         @test b == BigFloat.(10:12)
     end
     let
         x = RKParameterizationImplicit{BigFloat}(3)(
-            Vector{BigFloat}(undef, 12),
             BigFloat[1 2 3; 4 5 6; 7 8 9],
             BigFloat.(10:12))
         @test x == BigFloat.(1:12)
     end
     let
-        A = RKParameterizationImplicitAO{BigFloat}(3)(
-            Matrix{BigFloat}(undef, 3, 3),
-            BigFloat.(1:9))
+        A = RKParameterizationImplicitAO{BigFloat}(3)(BigFloat.(1:9))
         @test A == BigFloat[1 2 3; 4 5 6; 7 8 9]
     end
     let
         x = RKParameterizationImplicitAO{BigFloat}(3)(
-            Vector{BigFloat}(undef, 9),
             BigFloat[1 2 3; 4 5 6; 7 8 9])
         @test x == BigFloat.(1:9)
     end
     let
         A, b = RKParameterizationParallelExplicit{BigFloat}(3, 2)(
-            Matrix{BigFloat}(undef, 7, 7),
-            Vector{BigFloat}(undef, 7),
             BigFloat.(1:25))
         @test A == BigFloat[
             00 00 00 00 00 0 0;
@@ -296,7 +273,6 @@ using RungeKuttaToolKit.RKParameterization
     end
     let
         x = RKParameterizationParallelExplicit{BigFloat}(3, 2)(
-            Vector{BigFloat}(undef, 25),
             BigFloat[
                 00 00 00 00 00 0 0;
                 01 00 00 00 00 0 0;

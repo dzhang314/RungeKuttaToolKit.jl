@@ -10,6 +10,28 @@ using ..RungeKuttaToolKit: PERFORM_INTERNAL_BOUNDS_CHECKS,
 export AbstractRKParameterization, AbstractRKParameterizationAO
 
 
+@inline (param::AbstractRKParameterization{T})(
+    x::AbstractVector{T},
+) where {T} = param(Matrix{T}(undef, param.num_stages, param.num_stages),
+    Vector{T}(undef, param.num_stages), x)
+
+
+@inline (param::AbstractRKParameterization{T})(
+    A::AbstractMatrix{T},
+    b::AbstractVector{T},
+) where {T} = param(Vector{T}(undef, param.num_variables), A, b)
+
+
+@inline (param::AbstractRKParameterizationAO{T})(
+    x::AbstractVector{T},
+) where {T} = param(Matrix{T}(undef, param.num_stages, param.num_stages), x)
+
+
+@inline (param::AbstractRKParameterizationAO{T})(
+    A::AbstractMatrix{T},
+) where {T} = param(Vector{T}(undef, param.num_variables), A)
+
+
 ####################################################################### EXPLICIT
 
 
