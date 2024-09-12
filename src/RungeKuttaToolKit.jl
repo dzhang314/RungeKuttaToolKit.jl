@@ -493,7 +493,6 @@ export RKOCOptimizationProblem
 
 
 struct RKOCOptimizationProblem{T,E,C,P}
-
     ev::E
     cost::C
     param::P
@@ -501,21 +500,22 @@ struct RKOCOptimizationProblem{T,E,C,P}
     dA::Matrix{T}
     b::Vector{T}
     db::Vector{T}
+end
 
-    function RKOCOptimizationProblem(ev::E, cost::C, param::P) where {T,
-        E<:AbstractRKOCEvaluator{T},
-        C<:AbstractRKCost{T},
-        P<:AbstractRKParameterization{T}}
 
-        stage_axis, _, _ = get_axes(ev)
-        @assert param.num_stages == length(stage_axis)
+function RKOCOptimizationProblem(ev::E, cost::C, param::P) where {T,
+    E<:AbstractRKOCEvaluator{T},
+    C<:AbstractRKCost{T},
+    P<:AbstractRKParameterization{T}}
 
-        A = Matrix{T}(undef, param.num_stages, param.num_stages)
-        dA = Matrix{T}(undef, param.num_stages, param.num_stages)
-        b = Vector{T}(undef, param.num_stages)
-        db = Vector{T}(undef, param.num_stages)
-        return new{T,E,C,P}(ev, cost, param, A, dA, b, db)
-    end
+    stage_axis, _, _ = get_axes(ev)
+    @assert param.num_stages == length(stage_axis)
+
+    A = Matrix{T}(undef, param.num_stages, param.num_stages)
+    dA = Matrix{T}(undef, param.num_stages, param.num_stages)
+    b = Vector{T}(undef, param.num_stages)
+    db = Vector{T}(undef, param.num_stages)
+    return RKOCOptimizationProblem(ev, cost, param, A, dA, b, db)
 end
 
 
