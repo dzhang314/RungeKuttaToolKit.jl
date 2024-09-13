@@ -1,7 +1,7 @@
 name = "RungeKuttaToolKit"
 uuid = "5ccfa5ee-da33-4844-afab-33f13f6d8736"
 authors = ["David K. Zhang <dzhang314@gmail.com>"]
-version = "3.1.0"
+version = "3.2.0"
 
 [deps]
 Printf = "de0858da-6303-5e67-8744-51eddeeeb8d7"
