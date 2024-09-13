@@ -758,7 +758,6 @@ struct ButcherInstruction
     left::Int
     right::Int
     depth::Int
-    deficit::Int
 end
 
 
@@ -776,19 +775,16 @@ function build_instructions(input_trees::AbstractVector{LevelSequence})
     @assert allunique(ordered_trees)
     index = Dict(tree => i for (i, tree) in pairs(ordered_trees))
     @assert keys(index) == subtrees
-    deficit = Dict{LevelSequence,Int}()
     result = ButcherInstruction[]
     for tree in ordered_trees
         leg_count = count_legs(tree)
         if leg_count == 0
-            deficit[tree] = 0
             push!(result, ButcherInstruction(
-                NULL_INDEX, NULL_INDEX, depth[tree], deficit[tree]))
+                NULL_INDEX, NULL_INDEX, depth[tree]))
         elseif leg_count == 1
             leg = extract_leg(tree, 2, length(tree))
-            deficit[tree] = deficit[leg] + 1
             push!(result, ButcherInstruction(
-                index[leg], NULL_INDEX, depth[tree], deficit[tree]))
+                index[leg], NULL_INDEX, depth[tree]))
         else
             candidates = ButcherInstruction[]
             for (left, right) in BipartitionIterator(extract_legs(tree))
@@ -797,13 +793,9 @@ function build_instructions(input_trees::AbstractVector{LevelSequence})
                 if (left_factor in subtrees) && (right_factor in subtrees)
                     push!(candidates, ButcherInstruction(
                         index[left_factor], index[right_factor],
-                        max(depth[left_factor], depth[right_factor]) + 1,
-                        max(deficit[left_factor], deficit[right_factor])))
+                        max(depth[left_factor], depth[right_factor]) + 1))
                 end
             end
-            d = first(candidates).deficit
-            @assert all(insn.deficit == d for insn in candidates)
-            deficit[tree] = d
             filter!(insn -> insn.depth == depth[tree], candidates)
             @assert !isempty(candidates)
             # TODO: Is there a smarter way to choose?
