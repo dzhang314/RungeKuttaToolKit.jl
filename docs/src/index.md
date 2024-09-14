@@ -77,6 +77,14 @@ With a list of rooted trees in hand, we can construct an `RKOCEvaluator` object,
 RKOCEvaluator
 ```
 
+**RungeKuttaToolKit.jl** v3.3 and later also provides the `RKOCEvaluatorSIMD` type, which exposes an identical interface to `RKOCEvaluator` but internally uses [SIMD.jl](https://github.com/eschnett/SIMD.jl) to accelerate execution on CPUs with vector instruction sets, such as Intel AVX and Arm SVE. On modern CPUs, such as the [AMD Ryzen 9 9950X](https://www.amd.com/en/products/processors/desktops/ryzen/9000-series/amd-ryzen-9-9950x.html), `RKOCEvaluatorSIMD` can be up to 10x faster than `RKOCEvaluator`.
+
+Note that the `RKOCEvaluatorSIMD` *constructor* has a different signature, but after construction, usage is identical to `RKOCEvaluator`.
+
+```@docs
+RKOCEvaluatorSIMD
+```
+
 
 
 ## `RKOCEvaluator` Usage

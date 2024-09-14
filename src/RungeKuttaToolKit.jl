@@ -40,10 +40,13 @@ export LevelSequence, ButcherInstruction, ButcherInstructionTable,
     rooted_trees, all_rooted_trees, butcher_density, butcher_symmetry
 
 
+using SIMD: Vec, vload, vstore, vgather
+
+
 ####################################################### EVALUATOR DATA STRUCTURE
 
 
-export RKOCEvaluator, RKOCEvaluatorAO
+export RKOCEvaluator, RKOCEvaluatorSIMD, RKOCEvaluatorAO
 
 
 struct RKOCEvaluator{T} <: AbstractRKOCEvaluator{T}
@@ -112,18 +115,80 @@ RKOCEvaluator(order::Integer, num_stages::Integer) =
     RKOCEvaluator{Float64}(order, num_stages)
 
 
-struct RKOCAdjoint{T} <: AbstractRKOCAdjoint{T}
-    ev::RKOCEvaluator{T}
+struct RKOCEvaluatorSIMD{S,T} <: AbstractRKOCEvaluator{T}
+    table::ButcherInstructionTable
+    Phi::Vector{Vec{S,T}}
+    dPhi::Vector{Vec{S,T}}
+    inv_gamma::Vector{T}
 end
 
 
-@inline Base.adjoint(ev::RKOCEvaluator{T}) where {T} = RKOCAdjoint{T}(ev)
+"""
+    RKOCEvaluatorSIMD{S,T}(
+        trees::AbstractVector{LevelSequence},
+    ) -> RKOCEvaluatorSIMD{S,T}
+
+Construct an `RKOCEvaluatorSIMD` that encodes a given list of rooted trees.
+
+Unlike a standard `RKOCEvaluator`, the number of stages `S` is provided as a
+static type parameter in order to statically determine the SIMD vector width.
+
+# Arguments
+- `trees`: input list of rooted trees in `LevelSequence` representation.
+
+If the type `T` is not specified, it defaults to `Float64`.
+"""
+function RKOCEvaluatorSIMD{S,T}(
+    trees::AbstractVector{LevelSequence},
+) where {S,T}
+    table = ButcherInstructionTable(trees)
+    return RKOCEvaluatorSIMD{S,T}(table,
+        Vector{Vec{S,T}}(undef, length(table.instructions)),
+        Vector{Vec{S,T}}(undef, length(table.instructions)),
+        [inv(T(butcher_density(tree))) for tree in trees])
+end
+
+
+RKOCEvaluatorSIMD{S}(trees::AbstractVector{LevelSequence}) where {S} =
+    RKOCEvaluatorSIMD{S,Float64}(trees)
+
+
+"""
+    RKOCEvaluatorSIMD{S,T}(order::Integer) -> RKOCEvaluatorSIMD{S,T}
+
+Construct an `RKOCEvaluatorSIMD` that encodes all rooted trees
+having at most `order` vertices. This is equivalent to
+`RKOCEvaluatorSIMD{S,T}(all_rooted_trees(order))`.
+
+Unlike a standard `RKOCEvaluator`, the number of stages `S` is provided as a
+static type parameter in order to statically determine the SIMD vector width.
+
+If the type `T` is not specified, it defaults to `Float64`.
+"""
+RKOCEvaluatorSIMD{S,T}(order::Integer) where {S,T} =
+    RKOCEvaluatorSIMD{S,T}(all_rooted_trees(order))
+
+
+RKOCEvaluatorSIMD{S}(order::Integer) where {S} =
+    RKOCEvaluatorSIMD{S,Float64}(order)
 
 
 ################################################################################
 
 
-function get_axes(ev::RKOCEvaluator{T}) where {T}
+struct RKOCAdjoint{T,E} <: AbstractRKOCAdjoint{T}
+    ev::E
+end
+
+
+@inline Base.adjoint(ev::E) where {T,E<:AbstractRKOCEvaluator{T}} =
+    RKOCAdjoint{T,E}(ev)
+
+
+################################################################################
+
+
+@inline function get_axes(ev::RKOCEvaluator{T}) where {T}
     stage_axis = axes(ev.Phi, 1)
     internal_axis = axes(ev.Phi, 2)
     output_axis = axes(ev.inv_gamma, 1)
@@ -138,6 +203,64 @@ function get_axes(ev::RKOCEvaluator{T}) where {T}
         @assert axes(ev.inv_gamma) == (output_axis,)
     end
     return (stage_axis, internal_axis, output_axis)
+end
+
+
+@inline function get_axes(ev::RKOCEvaluatorSIMD{S,T}) where {S,T}
+    stage_axis = Base.OneTo(S)
+    internal_axis = axes(ev.Phi, 1)
+    output_axis = axes(ev.inv_gamma, 1)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(ev.table.instructions) == (internal_axis,)
+        @assert axes(ev.table.selected_indices) == (output_axis,)
+        @assert axes(ev.table.source_indices) == (internal_axis,)
+        @assert axes(ev.table.extension_indices) == (internal_axis,)
+        @assert axes(ev.table.rooted_sum_ranges) == (internal_axis,)
+        @assert axes(ev.Phi) == (internal_axis,)
+        @assert axes(ev.dPhi) == (internal_axis,)
+        @assert axes(ev.inv_gamma) == (output_axis,)
+    end
+    return (stage_axis, internal_axis, output_axis)
+end
+
+
+@inline function vload_vec(::Val{N}, v::Vector{T}) where {N,T}
+    @assert size(v) == (N,)
+    ptr = pointer(v)
+    return vload(Vec{N,T}, ptr)
+end
+
+
+@inline function vload_cols(::Val{N}, A::Matrix{T}) where {N,T}
+    @assert size(A) == (N, N)
+    row_size = N * sizeof(T)
+    ptr = pointer(A)
+    return ntuple(
+        i -> vload(Vec{N,T}, ptr + (i - 1) * row_size),
+        Val{N}())
+end
+
+
+@inline function vload_rows(::Val{N}, A::Matrix{T}) where {N,T}
+    @assert size(A) == (N, N)
+    entry_size = sizeof(T)
+    row_size = N * entry_size
+    iota = Vec{N,Int}(ntuple(i -> (i - 1) * row_size, Val{N}()))
+    base = pointer(A) + iota
+    return ntuple(
+        i -> vgather(base + (i - 1) * entry_size),
+        Val{N}())
+end
+
+
+@inline function vsum(v::Vec{N,T}) where {N,T}
+    # Compute dot products sequentially for determinism.
+    # SIMD parallel sum instructions can change summation order.
+    result = zero(T)
+    for i = 1:N
+        result += v[i]
+    end
+    return result
 end
 
 
@@ -194,6 +317,52 @@ function compute_Phi!(
 end
 
 
+function compute_Phi!(
+    ev::RKOCEvaluatorSIMD{S,T},
+    A::AbstractMatrix{T},
+) where {S,T}
+
+    # Validate array dimensions.
+    stage_axis, _, _ = get_axes(ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(A) == (stage_axis, stage_axis)
+    end
+
+    # Construct numeric constants.
+    _zeros = zero(Vec{S,T})
+    _ones = one(Vec{S,T})
+
+    # Load columns of A into SIMD registers.
+    A_cols = vload_cols(Val{S}(), A)
+
+    # Iterate over Butcher instructions.
+    @inbounds for (k, instruction) in pairs(ev.table.instructions)
+        p, q = instruction.left, instruction.right
+        if p == NULL_INDEX
+            # The Butcher weight vector for the trivial tree
+            # (p == NULL_INDEX and q == NULL_INDEX) is the all-ones vector.
+            @assert q == NULL_INDEX
+            ev.Phi[k] = _ones
+        elseif q == NULL_INDEX
+            # The Butcher weight vector for a tree obtained by extension
+            # (p != NULL_INDEX and q == NULL_INDEX) is a matrix-vector product.
+            phi = ev.Phi[p]
+            result = _zeros
+            for i = 1:S
+                result += A_cols[i] * phi[i]
+            end
+            ev.Phi[k] = result
+        else
+            # The Butcher weight vector for a tree obtained by rooted sum
+            # (p != NULL_INDEX and q != NULL_INDEX) is an elementwise product.
+            ev.Phi[k] = ev.Phi[p] * ev.Phi[q]
+        end
+    end
+
+    return ev
+end
+
+
 function compute_residual(
     ev::RKOCEvaluator{T},
     b::AbstractVector{T},
@@ -207,17 +376,38 @@ function compute_residual(
         @assert i in output_axis
     end
 
-    # Compute dot product without SIMD for determinism.
-    lhs = zero(T)
-    @inbounds begin
+    return @inbounds begin
+        # Compute dot product without SIMD for determinism.
+        lhs = zero(T)
         k = ev.table.selected_indices[i]
         for j in stage_axis
             lhs += b[j] * ev.Phi[j, k]
         end
+        # Subtract inv_gamma at the end for improved numerical stability.
+        return lhs - ev.inv_gamma[i]
+    end
+end
+
+
+function compute_residual(
+    ev::RKOCEvaluatorSIMD{S,T},
+    b::AbstractVector{T},
+    i::Integer,
+) where {S,T}
+
+    # Validate array dimensions.
+    stage_axis, _, output_axis = get_axes(ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(b) == (stage_axis,)
+        @assert i in output_axis
     end
 
-    # Subtract inv_gamma at the end for improved numerical stability.
-    return lhs - ev.inv_gamma[i]
+    return @inbounds begin
+        phi = ev.Phi[ev.table.selected_indices[i]]
+        vb = vload_vec(Val{S}(), b)
+        # Subtract inv_gamma at the end for improved numerical stability.
+        return vsum(vb * phi) - ev.inv_gamma[i]
+    end
 end
 
 
@@ -237,6 +427,60 @@ function compute_residuals!(
     # Compute residuals.
     @inbounds for i in output_axis
         residuals[i] = compute_residual(ev, b, i)
+    end
+
+    return residuals
+end
+
+
+function compute_residuals!(
+    residuals::AbstractVector{T},
+    ev::RKOCEvaluatorSIMD{S,T},
+    b::AbstractVector{T},
+) where {S,T}
+
+    # Validate array dimensions.
+    stage_axis, _, output_axis = get_axes(ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert Base.require_one_based_indexing(residuals)
+        @assert axes(residuals) == (output_axis,)
+        @assert axes(b) == (stage_axis,)
+    end
+
+    # Construct numeric constants.
+    _zeros = zero(Vec{S,T})
+
+    # Load b into SIMD registers.
+    vb = vload_vec(Val{S}(), b)
+
+    output_length = length(output_axis)
+    int_size = sizeof(Int)
+    entry_size = sizeof(T)
+    int_row_size = S * int_size
+    row_size = S * entry_size
+    resptr = pointer(residuals)
+    indptr = pointer(ev.table.selected_indices)
+    phiptr = reinterpret(Ptr{T}, pointer(ev.Phi))
+    invptr = pointer(ev.inv_gamma)
+
+    @inbounds begin
+        i = 0
+        while i + S <= output_length
+            base = phiptr + (vload(Vec{S,Int}, indptr) - 1) * row_size
+            lhs = _zeros
+            for j = 1:S
+                lhs += vgather(base) * vb[j]
+            end
+            vstore(lhs - vload(Vec{S,T}, invptr), resptr, nothing)
+            i += S
+            resptr += row_size
+            indptr += int_row_size
+            invptr += row_size
+        end
+        while i <= output_length
+            residuals[i] = compute_residual(ev, b, i)
+            i += 1
+        end
     end
 
     return residuals
