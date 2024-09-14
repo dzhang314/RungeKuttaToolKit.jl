@@ -14,7 +14,7 @@ over a given set of rooted trees ``t \in T``.
 
 - **RungeKuttaToolKit.jl** is designed for **extremely high performance** and **stable memory usage**. It evaluates Runge--Kutta order conditions and their derivatives millions of times per second on a single CPU core, using fast in-place algorithms that allocate zero memory outside of `RKOCEvaluator` construction.
 - **RungeKuttaToolKit.jl** works with **all numeric types** that support arithmetic (`+` `-` `*` `/`), including low-precision and high-precision floating-point types, `BigFloat`, `Rational`, and even symbolic types.
-- **RungeKuttaToolKit.jl** is lightweight and has **zero dependencies** outside of Julia `Base`.
+- **RungeKuttaToolKit.jl** is lightweight and has **only two dependencies** outside of Julia `Base`: [**SIMD.jl**](https://github.com/eschnett/SIMD.jl) and [**MultiFloats.jl**](https://github.com/dzhang314/MultiFloats.jl).
 - **RungeKuttaToolKit.jl** is [**regularly and extensively tested**](https://github.com/dzhang314/RungeKuttaToolKit.jl/blob/master/test/runtests.jl) for correctness and performance.
 
 
