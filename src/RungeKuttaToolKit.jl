@@ -25,7 +25,6 @@ abstract type AbstractRKOCAdjointAO{T} end
 abstract type AbstractRKCost{T} end
 function compute_residual end
 include("RKCost.jl")
-using .RKCost
 
 
 function compute_residuals! end
@@ -687,136 +686,6 @@ function pushforward_dresiduals!(
 end
 
 
-###################################################### COST FUNCTION DERIVATIVES
-
-
-function (::RKCostL2{T})(
-    adj::RKOCAdjoint{T,RKOCEvaluator{T}},
-    b::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    stage_axis, _, _ = get_axes(adj.ev)
-    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(b) == (stage_axis,)
-    end
-
-    # Construct numeric constants.
-    _zero = zero(T)
-
-    # Initialize dPhi using derivative of L2 norm.
-    @inbounds for (k, i) in Iterators.reverse(pairs(adj.ev.table.source_indices))
-        if i == NULL_INDEX
-            @simd ivdep for j in stage_axis
-                adj.ev.dPhi[j, k] = _zero
-            end
-        else
-            residual = compute_residual(adj.ev, b, i)
-            derivative = residual + residual
-            @simd ivdep for j in stage_axis
-                adj.ev.dPhi[j, k] = derivative * b[j]
-            end
-        end
-    end
-
-    return adj
-end
-
-
-function (::RKCostL2{T})(
-    adj::RKOCAdjoint{T,RKOCEvaluatorSIMD{S,T}},
-    b::AbstractVector{T},
-) where {S,T}
-
-    # Validate array dimensions.
-    stage_axis, _, _ = get_axes(adj.ev)
-    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(b) == (stage_axis,)
-    end
-
-    # Construct numeric constants.
-    _zeros = zero(Vec{S,T})
-
-    # Load b into SIMD registers.
-    vb = vload_vec(Val{S}(), b)
-
-    # Initialize dPhi using derivative of L2 norm.
-    @inbounds for (k, i) in Iterators.reverse(pairs(adj.ev.table.source_indices))
-        if i == NULL_INDEX
-            adj.ev.dPhi[k] = _zeros
-        else
-            residual = compute_residual(adj.ev, b, i)
-            derivative = residual + residual
-            adj.ev.dPhi[k] = derivative * vb
-        end
-    end
-
-    return adj
-end
-
-
-function (::RKCostL2{T})(
-    db::AbstractVector{T},
-    adj::RKOCAdjoint{T,RKOCEvaluator{T}},
-    b::AbstractVector{T},
-) where {T}
-
-    # Validate array dimensions.
-    stage_axis, _, _ = get_axes(adj.ev)
-    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(db) == (stage_axis,)
-        @assert axes(b) == (stage_axis,)
-    end
-
-    # Construct numeric constants.
-    _zero = zero(T)
-
-    # Initialize db to zero.
-    @simd ivdep for i in stage_axis
-        @inbounds db[i] = _zero
-    end
-
-    # Compute db using derivative of L2 norm.
-    @inbounds for (i, k) in pairs(adj.ev.table.selected_indices)
-        residual = compute_residual(adj.ev, b, i)
-        derivative = residual + residual
-        @simd ivdep for j in stage_axis
-            db[j] += derivative * adj.ev.Phi[j, k]
-        end
-    end
-
-    return db
-end
-
-
-function (::RKCostL2{T})(
-    db::AbstractVector{T},
-    adj::RKOCAdjoint{T,RKOCEvaluatorSIMD{S,T}},
-    b::AbstractVector{T},
-) where {S,T}
-
-    # Validate array dimensions.
-    stage_axis, _, _ = get_axes(adj.ev)
-    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
-        @assert axes(db) == (stage_axis,)
-        @assert axes(b) == (stage_axis,)
-    end
-
-    # Initialize db to zero.
-    vdb = zero(Vec{S,T})
-
-    # Compute db using derivative of L2 norm.
-    @inbounds for (i, k) in pairs(adj.ev.table.selected_indices)
-        residual = compute_residual(adj.ev, b, i)
-        derivative = residual + residual
-        vdb += derivative * adj.ev.Phi[k]
-    end
-
-    vstore_vec!(db, vdb)
-    return db
-end
-
-
 ############################################ GRADIENT COMPUTATION (REVERSE-MODE)
 
 
@@ -966,6 +835,12 @@ function pullback_dA!(
 
     return dA
 end
+
+
+################################################################################
+
+
+include("L2Gradients.jl")
 
 
 ################################################################################

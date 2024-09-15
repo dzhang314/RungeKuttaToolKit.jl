@@ -13,6 +13,7 @@ const NUMERIC_TYPES = [
     Float16, Float32, Float64, BigFloat,
     Float64x1, Float64x2, Float64x3, Float64x4,
     Float64x5, Float64x6, Float64x7, Float64x8]
+const SIMD_NUMERIC_TYPES = [Float16, Float32, Float64]
 const FAST_NUMERIC_TYPES = [
     Float16, Float32, Float64,
     Float64x1, Float64x2, Float64x3]
@@ -344,6 +345,35 @@ using RungeKuttaToolKit.ExampleMethods: RK4, GL6
 end
 
 
+function test_simd_residuals(::Type{T}, method::Function, order::Int) where {T}
+
+    A, b = method(T)
+    num_stages = length(b)
+    @assert size(A) == (num_stages, num_stages)
+    @assert size(b) == (num_stages,)
+    ev = RKOCEvaluator{T}(order, num_stages)
+    ev_simd = RKOCEvaluatorSIMD{num_stages,T}(order)
+
+    residuals = similar(ev.inv_gamma)
+    residuals_simd = similar(ev_simd.inv_gamma)
+    @test iszero(@allocated ev(residuals, A, b))
+    @test iszero(@allocated ev_simd(residuals_simd, A, b))
+    @test residuals == ev(A, b)
+    @test residuals_simd == ev_simd(A, b)
+    @test residuals == residuals_simd
+
+    return nothing
+end
+
+
+@testset "SIMD residual calculation" begin
+    for T in SIMD_NUMERIC_TYPES
+        test_simd_residuals(T, RK4, 4)
+        test_simd_residuals(T, GL6, 6)
+    end
+end
+
+
 ################################################################# COST FUNCTIONS
 
 
@@ -620,6 +650,39 @@ end
 @testset "gradients" begin
     for T in [Float16, Float32, Float64, Float64x1, Float64x2]
         test_gradient(T)
+    end
+end
+
+
+function test_simd_gradient(::Type{T}) where {T}
+    for num_stages = 0:MAX_NUM_STAGES
+        trees = random_trees()
+        ev = RKOCEvaluator{T}(trees, num_stages)
+        ev_simd = RKOCEvaluatorSIMD{num_stages,T}(trees)
+        l2_cost = RKCostL2{T}()
+        for cost in [l2_cost]
+            for _ = 1:NUM_RANDOM_TRIALS
+                A = rand(T, num_stages, num_stages)
+                b = rand(T, num_stages)
+                gA = similar(A)
+                gb = similar(b)
+                gA_simd = similar(A)
+                gb_simd = similar(b)
+                test_gradient_allocs(ev, gA, gb, cost, A, b)
+                test_gradient_allocs(ev_simd, gA_simd, gb_simd, cost, A, b)
+                @test gA == gA_simd
+                @test gb == gb_simd
+                @test (gA, gb) == ev'(cost, A, b)
+                @test (gA_simd, gb_simd) == ev_simd'(cost, A, b)
+            end
+        end
+    end
+end
+
+
+@testset "SIMD gradients" begin
+    for T in SIMD_NUMERIC_TYPES
+        test_simd_gradient(T)
     end
 end
 
