@@ -451,6 +451,9 @@ end
 
 #=
 
+This is an attempt at a SIMD-optimized implementation of `compute_residuals!`,
+but it does not work when the SIMD vector length `S` is not a power of two.
+
 function compute_residuals!(
     residuals::AbstractVector{T},
     ev::RKOCEvaluatorSIMD{S,T},
