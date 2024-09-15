@@ -25,6 +25,7 @@ abstract type AbstractRKOCAdjointAO{T} end
 abstract type AbstractRKCost{T} end
 function compute_residual end
 include("RKCost.jl")
+using .RKCost
 
 
 function compute_residuals! end
@@ -225,14 +226,28 @@ end
 
 
 @inline function vload_vec(::Val{N}, v::Vector{T}) where {N,T}
-    @assert size(v) == (N,)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert size(v) == (N,)
+    end
     ptr = pointer(v)
     return vload(Vec{N,T}, ptr)
 end
 
 
+@inline function vstore_vec!(v::Vector{T}, data::Vec{N,T}) where {N,T}
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert size(v) == (N,)
+    end
+    ptr = pointer(v)
+    vstore(data, ptr, nothing)
+    return v
+end
+
+
 @inline function vload_cols(::Val{N}, A::Matrix{T}) where {N,T}
-    @assert size(A) == (N, N)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert size(A) == (N, N)
+    end
     row_size = N * sizeof(T)
     ptr = pointer(A)
     return ntuple(
@@ -242,7 +257,9 @@ end
 
 
 @inline function vload_rows(::Val{N}, A::Matrix{T}) where {N,T}
-    @assert size(A) == (N, N)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert size(A) == (N, N)
+    end
     entry_size = sizeof(T)
     row_size = N * entry_size
     iota = Vec{N,Int}(ntuple(i -> (i - 1) * row_size, Val{N}()))
@@ -453,30 +470,45 @@ function compute_residuals!(
     # Load b into SIMD registers.
     vb = vload_vec(Val{S}(), b)
 
-    output_length = length(output_axis)
+    # Obtain pointers to internal workspace arrays.
+    residuals_ptr = pointer(residuals)
+    selected_indices_ptr = pointer(ev.table.selected_indices)
+    Phi_ptr = reinterpret(Ptr{T}, pointer(ev.Phi))
+    inv_gamma_ptr = pointer(ev.inv_gamma)
+
+    # Compute pointer increments.
     int_size = sizeof(Int)
     entry_size = sizeof(T)
     int_row_size = S * int_size
     row_size = S * entry_size
-    resptr = pointer(residuals)
-    indptr = pointer(ev.table.selected_indices)
-    phiptr = reinterpret(Ptr{T}, pointer(ev.Phi))
-    invptr = pointer(ev.inv_gamma)
 
     @inbounds begin
         i = 0
+        output_length = length(output_axis)
+
+        # Compute residuals in SIMD batches.
         while i + S <= output_length
-            base = phiptr + (vload(Vec{S,Int}, indptr) - 1) * row_size
+            indices = vload(Vec{S,Int}, selected_indices_ptr)
+            Phi_row_ptrs = Phi_ptr + (indices - 1) * row_size
             lhs = _zeros
             for j = 1:S
-                lhs += vgather(base) * vb[j]
+                lhs += vgather(Phi_row_ptrs) * vb[j]
+                Phi_row_ptrs += entry_size
             end
-            vstore(lhs - vload(Vec{S,T}, invptr), resptr, nothing)
+            # Subtract inv_gamma at the end for improved numerical stability.
+            inv_gammas = vload(Vec{S,T}, inv_gamma_ptr)
+            vstore(lhs - inv_gammas, residuals_ptr, nothing)
+            # Advance pointers for next iteration.
             i += S
-            resptr += row_size
-            indptr += int_row_size
-            invptr += row_size
+            residuals_ptr += row_size
+            selected_indices_ptr += int_row_size
+            inv_gamma_ptr += row_size
         end
+
+        # Transition from 0-based to 1-based indexing.
+        i += 1
+
+        # Compute remaining residuals.
         while i <= output_length
             residuals[i] = compute_residual(ev, b, i)
             i += 1
@@ -655,6 +687,136 @@ function pushforward_dresiduals!(
 end
 
 
+###################################################### COST FUNCTION DERIVATIVES
+
+
+function (::RKCostL2{T})(
+    adj::RKOCAdjoint{T,RKOCEvaluator{T}},
+    b::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, _ = get_axes(adj.ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(b) == (stage_axis,)
+    end
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    # Initialize dPhi using derivative of L2 norm.
+    @inbounds for (k, i) in Iterators.reverse(pairs(adj.ev.table.source_indices))
+        if i == NULL_INDEX
+            @simd ivdep for j in stage_axis
+                adj.ev.dPhi[j, k] = _zero
+            end
+        else
+            residual = compute_residual(adj.ev, b, i)
+            derivative = residual + residual
+            @simd ivdep for j in stage_axis
+                adj.ev.dPhi[j, k] = derivative * b[j]
+            end
+        end
+    end
+
+    return adj
+end
+
+
+function (::RKCostL2{T})(
+    adj::RKOCAdjoint{T,RKOCEvaluatorSIMD{S,T}},
+    b::AbstractVector{T},
+) where {S,T}
+
+    # Validate array dimensions.
+    stage_axis, _, _ = get_axes(adj.ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(b) == (stage_axis,)
+    end
+
+    # Construct numeric constants.
+    _zeros = zero(Vec{S,T})
+
+    # Load b into SIMD registers.
+    vb = vload_vec(Val{S}(), b)
+
+    # Initialize dPhi using derivative of L2 norm.
+    @inbounds for (k, i) in Iterators.reverse(pairs(adj.ev.table.source_indices))
+        if i == NULL_INDEX
+            adj.ev.dPhi[k] = _zeros
+        else
+            residual = compute_residual(adj.ev, b, i)
+            derivative = residual + residual
+            adj.ev.dPhi[k] = derivative * vb
+        end
+    end
+
+    return adj
+end
+
+
+function (::RKCostL2{T})(
+    db::AbstractVector{T},
+    adj::RKOCAdjoint{T,RKOCEvaluator{T}},
+    b::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, _ = get_axes(adj.ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(db) == (stage_axis,)
+        @assert axes(b) == (stage_axis,)
+    end
+
+    # Construct numeric constants.
+    _zero = zero(T)
+
+    # Initialize db to zero.
+    @simd ivdep for i in stage_axis
+        @inbounds db[i] = _zero
+    end
+
+    # Compute db using derivative of L2 norm.
+    @inbounds for (i, k) in pairs(adj.ev.table.selected_indices)
+        residual = compute_residual(adj.ev, b, i)
+        derivative = residual + residual
+        @simd ivdep for j in stage_axis
+            db[j] += derivative * adj.ev.Phi[j, k]
+        end
+    end
+
+    return db
+end
+
+
+function (::RKCostL2{T})(
+    db::AbstractVector{T},
+    adj::RKOCAdjoint{T,RKOCEvaluatorSIMD{S,T}},
+    b::AbstractVector{T},
+) where {S,T}
+
+    # Validate array dimensions.
+    stage_axis, _, _ = get_axes(adj.ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(db) == (stage_axis,)
+        @assert axes(b) == (stage_axis,)
+    end
+
+    # Initialize db to zero.
+    vdb = zero(Vec{S,T})
+
+    # Compute db using derivative of L2 norm.
+    @inbounds for (i, k) in pairs(adj.ev.table.selected_indices)
+        residual = compute_residual(adj.ev, b, i)
+        derivative = residual + residual
+        vdb += derivative * adj.ev.Phi[k]
+    end
+
+    vstore_vec!(db, vdb)
+    return db
+end
+
+
 ############################################ GRADIENT COMPUTATION (REVERSE-MODE)
 
 
@@ -693,6 +855,42 @@ function pullback_dPhi!(
 end
 
 
+function pullback_dPhi!(
+    ev::RKOCEvaluatorSIMD{S,T},
+    A::AbstractMatrix{T},
+) where {S,T}
+
+    # Validate array dimensions.
+    stage_axis, internal_axis, _ = get_axes(ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(A) == (stage_axis, stage_axis)
+    end
+
+    # Load rows of A into SIMD registers.
+    A_rows = vload_rows(Val{S}(), A)
+
+    # Iterate over intermediate trees in reverse order.
+    @inbounds for k in Iterators.reverse(internal_axis)
+        c = ev.table.extension_indices[k]
+        if c != NULL_INDEX
+            # Perform adjoint matrix-vector multiplication.
+            dphi = ev.dPhi[c]
+            result = ev.dPhi[k]
+            for i = 1:S
+                result += A_rows[i] * dphi[i]
+            end
+            ev.dPhi[k] = result
+        end
+        for i in ev.table.rooted_sum_ranges[k]
+            (p, q) = ev.table.rooted_sum_indices[i]
+            ev.dPhi[k] += ev.Phi[p] * ev.dPhi[q]
+        end
+    end
+
+    return ev
+end
+
+
 function pullback_dA!(
     dA::AbstractMatrix{T},
     ev::RKOCEvaluator{T},
@@ -722,6 +920,46 @@ function pullback_dA!(
                 @simd ivdep for s in stage_axis
                     dA[s, t] += phi * ev.dPhi[s, c]
                 end
+            end
+        end
+    end
+
+    return dA
+end
+
+
+function pullback_dA!(
+    dA::AbstractMatrix{T},
+    ev::RKOCEvaluatorSIMD{S,T},
+) where {S,T}
+
+    # Validate array dimensions.
+    stage_axis, _, _ = get_axes(ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(dA) == (stage_axis, stage_axis)
+    end
+
+    # Construct numeric constants.
+    _zeros = zero(Vec{S,T})
+
+    # Initialize dA to zero.
+    dA_ptr = pointer(dA)
+    dA_row_ptr = dA_ptr
+    row_size = S * sizeof(T)
+    for _ = 1:S
+        vstore(_zeros, dA_row_ptr, nothing)
+        dA_row_ptr += row_size
+    end
+
+    # Iterate over intermediate trees obtained by extension.
+    @inbounds for (k, c) in pairs(ev.table.extension_indices)
+        if c != NULL_INDEX
+            phi = ev.Phi[k]
+            dA_row_ptr = dA_ptr
+            for t = 1:S
+                dA_row = vload(Vec{S,T}, dA_row_ptr)
+                vstore(dA_row + phi[t] * ev.dPhi[c], dA_row_ptr, nothing)
+                dA_row_ptr += row_size
             end
         end
     end
