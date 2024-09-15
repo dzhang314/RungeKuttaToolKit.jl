@@ -2,7 +2,7 @@
 
 julia_version = "1.10.5"
 manifest_format = "2.0"
-project_hash = "609197b85f66487b56737606c346aaeca9833c3d"
+project_hash = "b3f32844631c08262b94bfbf227c27c0d3b73cdd"
 
 [[deps.ANSIColoredPrinters]]
 git-tree-sha1 = "574baf8110975760d391c710b6341da1afa48d8c"
@@ -167,10 +167,10 @@ uuid = "14a3606d-f60d-562e-9121-12d972cd8159"
 version = "2023.1.10"
 
 [[deps.MultiFloats]]
-deps = ["LinearAlgebra", "Printf", "Random", "SIMD", "Test"]
-git-tree-sha1 = "3251ffff0826ac8c33458a258d81114adc2394fc"
+deps = ["LinearAlgebra", "Printf", "Random", "SIMD"]
+git-tree-sha1 = "cb2770624666be381dcff375b11eee4f8836eb70"
 uuid = "bdf0d083-296b-4888-a5b6-7498122e68a5"
-version = "2.0.2"
+version = "2.2.1"
 
 [[deps.NetworkOptions]]
 uuid = "ca575930-c2e3-43a9-ace4-1e988b2c1908"
@@ -183,9 +183,9 @@ version = "0.3.23+4"
 
 [[deps.OpenSSL_jll]]
 deps = ["Artifacts", "JLLWrappers", "Libdl"]
-git-tree-sha1 = "a028ee3cb5641cccc4c24e90c36b0a4f7707bdf5"
+git-tree-sha1 = "1b35263570443fdd9e76c76b7062116e2f374ab8"
 uuid = "458c3c95-2e84-50aa-8efc-19380b2a3a95"
-version = "3.0.14+0"
+version = "3.0.15+0"
 
 [[deps.PCRE2_jll]]
 deps = ["Artifacts", "Libdl"]
@@ -234,10 +234,10 @@ uuid = "2792f1a3-b283-48e8-9a74-f99dce5104f3"
 version = "0.1.0"
 
 [[deps.RungeKuttaToolKit]]
-deps = ["MultiFloats", "Printf"]
+deps = ["MultiFloats", "Printf", "SIMD"]
 path = ".."
 uuid = "5ccfa5ee-da33-4844-afab-33f13f6d8736"
-version = "2.0.0"
+version = "3.2.0"
 
 [[deps.SHA]]
 uuid = "ea8e919c-243c-51af-8825-aaa63cd721ce"

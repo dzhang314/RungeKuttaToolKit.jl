@@ -1,3 +1,5 @@
 [deps]
 Documenter = "e30172f5-a6a5-5a46-863b-614d45cd2de4"
+MultiFloats = "bdf0d083-296b-4888-a5b6-7498122e68a5"
 RungeKuttaToolKit = "5ccfa5ee-da33-4844-afab-33f13f6d8736"
+SIMD = "fdea26ae-647d-5447-a871-4b548cad5224"
