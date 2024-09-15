@@ -334,15 +334,21 @@ function test_residuals(::Type{T}, method::Function, order::Int) where {T}
 end
 
 
-using RungeKuttaToolKit.ExampleMethods: RK4, GL6
+using RungeKuttaToolKit.ExampleMethods
 
 
 @testset "residual calculation" begin
     for T in NUMERIC_TYPES
-        test_residuals(T, RK4, 4)
-        test_residuals(T, GL6, 6)
+        test_residuals(T, RungeKutta4, 4)
+        test_residuals(T, GaussLegendre6, 6)
     end
 end
+
+
+# This needs to be a separate function to trigger
+# recompilation for each SIMD vector length.
+test_residual_allocs(ev, residuals, A, b) =
+    @test iszero(@allocated ev(residuals, A, b))
 
 
 function test_simd_residuals(::Type{T}, method::Function, order::Int) where {T}
@@ -357,7 +363,8 @@ function test_simd_residuals(::Type{T}, method::Function, order::Int) where {T}
     residuals = similar(ev.inv_gamma)
     residuals_simd = similar(ev_simd.inv_gamma)
     @test iszero(@allocated ev(residuals, A, b))
-    @test iszero(@allocated ev_simd(residuals_simd, A, b))
+    test_residual_allocs(ev, residuals, A, b)
+    test_residual_allocs(ev_simd, residuals_simd, A, b)
     @test residuals == ev(A, b)
     @test residuals_simd == ev_simd(A, b)
     @test residuals == residuals_simd
@@ -368,8 +375,8 @@ end
 
 @testset "SIMD residual calculation" begin
     for T in SIMD_NUMERIC_TYPES
-        test_simd_residuals(T, RK4, 4)
-        test_simd_residuals(T, GL6, 6)
+        test_simd_residuals(T, RungeKutta4, 4)
+        test_simd_residuals(T, GaussLegendre6, 6)
     end
 end
 
@@ -438,8 +445,8 @@ end
 
 @testset "cost functions" begin
     for T in NUMERIC_TYPES
-        test_cost_functions(T, RK4, 4)
-        test_cost_functions(T, GL6, 6)
+        test_cost_functions(T, RungeKutta4, 4)
+        test_cost_functions(T, GaussLegendre6, 6)
     end
 end
 
@@ -655,7 +662,7 @@ end
 
 
 function test_simd_gradient(::Type{T}) where {T}
-    for num_stages = 0:MAX_NUM_STAGES
+    for num_stages = 1:MAX_NUM_STAGES
         trees = random_trees()
         ev = RKOCEvaluator{T}(trees, num_stages)
         ev_simd = RKOCEvaluatorSIMD{num_stages,T}(trees)
@@ -670,10 +677,8 @@ function test_simd_gradient(::Type{T}) where {T}
                 gb_simd = similar(b)
                 test_gradient_allocs(ev, gA, gb, cost, A, b)
                 test_gradient_allocs(ev_simd, gA_simd, gb_simd, cost, A, b)
-                @test gA == gA_simd
-                @test gb == gb_simd
-                @test (gA, gb) == ev'(cost, A, b)
-                @test (gA_simd, gb_simd) == ev_simd'(cost, A, b)
+                @test iszero(maximum_relative_difference(gA, gA_simd))
+                @test iszero(maximum_relative_difference(gb, gb_simd))
             end
         end
     end

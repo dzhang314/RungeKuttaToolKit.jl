@@ -1,10 +1,10 @@
 module ExampleMethods
 
 
-############################################################################ RK4
+export RungeKutta4
 
 
-function RK4(::Type{T}) where {T}
+function RungeKutta4(::Type{T}) where {T}
     _zero = zero(T)
     _one = one(T)
     _two = _one + _one
@@ -25,10 +25,10 @@ function RK4(::Type{T}) where {T}
 end
 
 
-############################################################################ GL6
+export GaussLegendre6
 
 
-function GL6(::Type{T}) where {T}
+function GaussLegendre6(::Type{T}) where {T}
     _1 = one(T)
     _2 = _1 + _1
     _4 = _2 + _2

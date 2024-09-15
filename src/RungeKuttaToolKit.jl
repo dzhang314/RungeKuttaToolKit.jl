@@ -429,7 +429,7 @@ end
 
 function compute_residuals!(
     residuals::AbstractVector{T},
-    ev::RKOCEvaluator{T},
+    ev::AbstractRKOCEvaluator{T},
     b::AbstractVector{T},
 ) where {T}
 
@@ -448,6 +448,8 @@ function compute_residuals!(
     return residuals
 end
 
+
+#=
 
 function compute_residuals!(
     residuals::AbstractVector{T},
@@ -516,6 +518,8 @@ function compute_residuals!(
 
     return residuals
 end
+
+=#
 
 
 ############################## DIRECTIONAL DERIVATIVE COMPUTATION (FORWARD-MODE)
