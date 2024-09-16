@@ -41,12 +41,13 @@ export LevelSequence, ButcherInstruction, ButcherInstructionTable,
 
 
 using SIMD: Vec, vload, vstore, vgather
+using MultiFloats: MultiFloat, MultiFloatVec, mfvgather, mfvscatter
 
 
 ####################################################### EVALUATOR DATA STRUCTURE
 
 
-export RKOCEvaluator, RKOCEvaluatorSIMD, RKOCEvaluatorAO
+export RKOCEvaluator, RKOCEvaluatorSIMD, RKOCEvaluatorMFV, RKOCEvaluatorAO
 
 
 struct RKOCEvaluator{T} <: AbstractRKOCEvaluator{T}
@@ -173,7 +174,65 @@ RKOCEvaluatorSIMD{S}(order::Integer) where {S} =
     RKOCEvaluatorSIMD{S,Float64}(order)
 
 
-################################################################################
+struct RKOCEvaluatorMFV{S,T,N} <: AbstractRKOCEvaluator{MultiFloat{T,N}}
+    table::ButcherInstructionTable
+    Phi::Vector{MultiFloatVec{S,T,N}}
+    dPhi::Vector{MultiFloatVec{S,T,N}}
+    inv_gamma::Vector{MultiFloat{T,N}}
+end
+
+
+"""
+    RKOCEvaluatorMFV{S,T,N}(
+        trees::AbstractVector{LevelSequence},
+    ) -> RKOCEvaluatorMFV{S,T,N}
+
+Construct an `RKOCEvaluatorMFV` that encodes a given list of rooted trees.
+
+Unlike a standard `RKOCEvaluator`, the number of stages `S` is provided as a
+static type parameter in order to statically determine the SIMD vector width.
+
+# Arguments
+- `trees`: input list of rooted trees in `LevelSequence` representation.
+
+If the type `T` is not specified, it defaults to `Float64`.
+"""
+function RKOCEvaluatorMFV{S,T,N}(
+    trees::AbstractVector{LevelSequence},
+) where {S,T,N}
+    table = ButcherInstructionTable(trees)
+    return RKOCEvaluatorMFV{S,T,N}(table,
+        Vector{MultiFloatVec{S,T,N}}(undef, length(table.instructions)),
+        Vector{MultiFloatVec{S,T,N}}(undef, length(table.instructions)),
+        [inv(MultiFloat{T,N}(butcher_density(tree))) for tree in trees])
+end
+
+
+RKOCEvaluatorMFV{S,N}(trees::AbstractVector{LevelSequence}) where {S,N} =
+    RKOCEvaluatorMFV{S,Float64,N}(trees)
+
+
+"""
+    RKOCEvaluatorMFV{S,T,N}(order::Integer) -> RKOCEvaluatorMFV{S,T,N}
+
+Construct an `RKOCEvaluatorMFV` that encodes all rooted trees
+having at most `order` vertices. This is equivalent to
+`RKOCEvaluatorMFV{S,T}(all_rooted_trees(order))`.
+
+Unlike a standard `RKOCEvaluator`, the number of stages `S` is provided as a
+static type parameter in order to statically determine the SIMD vector width.
+
+If the type `T` is not specified, it defaults to `Float64`.
+"""
+RKOCEvaluatorMFV{S,T,N}(order::Integer) where {S,T,N} =
+    RKOCEvaluatorMFV{S,T,N}(all_rooted_trees(order))
+
+
+RKOCEvaluatorMFV{S,N}(order::Integer) where {S,N} =
+    RKOCEvaluatorMFV{S,Float64,N}(order)
+
+
+######################################################### ADJOINT DATA STRUCTURE
 
 
 struct RKOCAdjoint{T,E} <: AbstractRKOCAdjoint{T}
@@ -188,7 +247,7 @@ end
 ################################################################################
 
 
-@inline function get_axes(ev::RKOCEvaluator{T}) where {T}
+@inline function get_axes(ev::RKOCEvaluator)
     stage_axis = axes(ev.Phi, 1)
     internal_axis = axes(ev.Phi, 2)
     output_axis = axes(ev.inv_gamma, 1)
@@ -206,7 +265,25 @@ end
 end
 
 
-@inline function get_axes(ev::RKOCEvaluatorSIMD{S,T}) where {S,T}
+@inline function get_axes(ev::RKOCEvaluatorSIMD{S}) where {S}
+    stage_axis = Base.OneTo(S)
+    internal_axis = axes(ev.Phi, 1)
+    output_axis = axes(ev.inv_gamma, 1)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(ev.table.instructions) == (internal_axis,)
+        @assert axes(ev.table.selected_indices) == (output_axis,)
+        @assert axes(ev.table.source_indices) == (internal_axis,)
+        @assert axes(ev.table.extension_indices) == (internal_axis,)
+        @assert axes(ev.table.rooted_sum_ranges) == (internal_axis,)
+        @assert axes(ev.Phi) == (internal_axis,)
+        @assert axes(ev.dPhi) == (internal_axis,)
+        @assert axes(ev.inv_gamma) == (output_axis,)
+    end
+    return (stage_axis, internal_axis, output_axis)
+end
+
+
+@inline function get_axes(ev::RKOCEvaluatorMFV{S}) where {S}
     stage_axis = Base.OneTo(S)
     internal_axis = axes(ev.Phi, 1)
     output_axis = axes(ev.inv_gamma, 1)
@@ -233,12 +310,39 @@ end
 end
 
 
+@inline function mfvload_vec(
+    ::Val{M},
+    v::Vector{MultiFloat{T,N}},
+) where {M,T,N}
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert size(v) == (M,)
+    end
+    v_ptr = pointer(v)
+    iota = Vec{M,Int}(ntuple(i -> (i - 1), Val{M}()))
+    return mfvgather(v_ptr, iota)
+end
+
+
 @inline function vstore_vec!(v::Vector{T}, data::Vec{N,T}) where {N,T}
     @static if PERFORM_INTERNAL_BOUNDS_CHECKS
         @assert size(v) == (N,)
     end
     ptr = pointer(v)
     vstore(data, ptr, nothing)
+    return v
+end
+
+
+@inline function mfvstore_vec!(
+    v::Vector{MultiFloat{T,N}},
+    data::MultiFloatVec{M,T,N},
+) where {M,T,N}
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert size(v) == (M,)
+    end
+    v_ptr = pointer(v)
+    iota = Vec{M,Int}(ntuple(i -> (i - 1), Val{M}()))
+    mfvscatter(data, v_ptr, iota)
     return v
 end
 
@@ -252,6 +356,19 @@ end
     return ntuple(
         i -> vload(Vec{N,T}, ptr + (i - 1) * row_size),
         Val{N}())
+end
+
+
+@inline function mfvload_cols(
+    ::Val{M},
+    A::Matrix{MultiFloat{T,N}},
+) where {M,T,N}
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert size(A) == (M, M)
+    end
+    A_ptr = pointer(A)
+    iota = Vec{M,Int}(ntuple(i -> (i - 1), Val{M}()))
+    return ntuple(i -> mfvgather(A_ptr, iota + (i - 1) * M), Val{M}())
 end
 
 
@@ -269,11 +386,35 @@ end
 end
 
 
+@inline function mfvload_rows(
+    ::Val{M},
+    A::Matrix{MultiFloat{T,N}},
+) where {M,T,N}
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert size(A) == (M, M)
+    end
+    A_ptr = pointer(A)
+    iota = Vec{M,Int}(ntuple(i -> (i - 1) * M, Val{M}()))
+    return ntuple(i -> mfvgather(A_ptr, iota + (i - 1)), Val{M}())
+end
+
+
 @inline function vsum(v::Vec{N,T}) where {N,T}
     # Compute dot products sequentially for determinism.
     # SIMD parallel sum instructions can change summation order.
     result = zero(T)
     for i = 1:N
+        result += v[i]
+    end
+    return result
+end
+
+
+@inline function mfvsum(v::MultiFloatVec{M,T,N}) where {M,T,N}
+    # Compute dot products sequentially for determinism.
+    # SIMD parallel sum instructions can change summation order.
+    result = zero(MultiFloat{T,N})
+    for i = 1:M
         result += v[i]
     end
     return result
@@ -379,6 +520,52 @@ function compute_Phi!(
 end
 
 
+function compute_Phi!(
+    ev::RKOCEvaluatorMFV{S,T,N},
+    A::AbstractMatrix{MultiFloat{T,N}},
+) where {S,T,N}
+
+    # Validate array dimensions.
+    stage_axis, _, _ = get_axes(ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(A) == (stage_axis, stage_axis)
+    end
+
+    # Construct numeric constants.
+    _zeros = zero(MultiFloatVec{S,T,N})
+    _ones = one(MultiFloatVec{S,T,N})
+
+    # Load columns of A into SIMD registers.
+    A_cols = mfvload_cols(Val{S}(), A)
+
+    # Iterate over Butcher instructions.
+    @inbounds for (k, instruction) in pairs(ev.table.instructions)
+        p, q = instruction.left, instruction.right
+        if p == NULL_INDEX
+            # The Butcher weight vector for the trivial tree
+            # (p == NULL_INDEX and q == NULL_INDEX) is the all-ones vector.
+            @assert q == NULL_INDEX
+            ev.Phi[k] = _ones
+        elseif q == NULL_INDEX
+            # The Butcher weight vector for a tree obtained by extension
+            # (p != NULL_INDEX and q == NULL_INDEX) is a matrix-vector product.
+            phi = ev.Phi[p]
+            result = _zeros
+            for i = 1:S
+                result += A_cols[i] * phi[i]
+            end
+            ev.Phi[k] = result
+        else
+            # The Butcher weight vector for a tree obtained by rooted sum
+            # (p != NULL_INDEX and q != NULL_INDEX) is an elementwise product.
+            ev.Phi[k] = ev.Phi[p] * ev.Phi[q]
+        end
+    end
+
+    return ev
+end
+
+
 function compute_residual(
     ev::RKOCEvaluator{T},
     b::AbstractVector{T},
@@ -423,6 +610,28 @@ function compute_residual(
         vb = vload_vec(Val{S}(), b)
         # Subtract inv_gamma at the end for improved numerical stability.
         return vsum(vb * phi) - ev.inv_gamma[i]
+    end
+end
+
+
+function compute_residual(
+    ev::RKOCEvaluatorMFV{S,T,N},
+    b::AbstractVector{MultiFloat{T,N}},
+    i::Integer,
+) where {S,T,N}
+
+    # Validate array dimensions.
+    stage_axis, _, output_axis = get_axes(ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(b) == (stage_axis,)
+        @assert i in output_axis
+    end
+
+    return @inbounds begin
+        phi = ev.Phi[ev.table.selected_indices[i]]
+        vb = mfvload_vec(Val{S}(), b)
+        # Subtract inv_gamma at the end for improved numerical stability.
+        return mfvsum(vb * phi) - ev.inv_gamma[i]
     end
 end
 
@@ -767,6 +976,42 @@ function pullback_dPhi!(
 end
 
 
+function pullback_dPhi!(
+    ev::RKOCEvaluatorMFV{S,T,N},
+    A::AbstractMatrix{MultiFloat{T,N}},
+) where {S,T,N}
+
+    # Validate array dimensions.
+    stage_axis, internal_axis, _ = get_axes(ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(A) == (stage_axis, stage_axis)
+    end
+
+    # Load rows of A into SIMD registers.
+    A_rows = mfvload_rows(Val{S}(), A)
+
+    # Iterate over intermediate trees in reverse order.
+    @inbounds for k in Iterators.reverse(internal_axis)
+        c = ev.table.extension_indices[k]
+        if c != NULL_INDEX
+            # Perform adjoint matrix-vector multiplication.
+            dphi = ev.dPhi[c]
+            result = ev.dPhi[k]
+            for i = 1:S
+                result += A_rows[i] * dphi[i]
+            end
+            ev.dPhi[k] = result
+        end
+        for i in ev.table.rooted_sum_ranges[k]
+            (p, q) = ev.table.rooted_sum_indices[i]
+            ev.dPhi[k] += ev.Phi[p] * ev.dPhi[q]
+        end
+    end
+
+    return ev
+end
+
+
 function pullback_dA!(
     dA::AbstractMatrix{T},
     ev::RKOCEvaluator{T},
@@ -820,22 +1065,63 @@ function pullback_dA!(
 
     # Initialize dA to zero.
     dA_ptr = pointer(dA)
-    dA_row_ptr = dA_ptr
-    row_size = S * sizeof(T)
+    dA_col_ptr = dA_ptr
+    col_size = S * sizeof(T)
     for _ = 1:S
-        vstore(_zeros, dA_row_ptr, nothing)
-        dA_row_ptr += row_size
+        vstore(_zeros, dA_col_ptr, nothing)
+        dA_col_ptr += col_size
     end
 
     # Iterate over intermediate trees obtained by extension.
     @inbounds for (k, c) in pairs(ev.table.extension_indices)
         if c != NULL_INDEX
             phi = ev.Phi[k]
-            dA_row_ptr = dA_ptr
+            dA_col_ptr = dA_ptr
             for t = 1:S
-                dA_row = vload(Vec{S,T}, dA_row_ptr)
-                vstore(dA_row + phi[t] * ev.dPhi[c], dA_row_ptr, nothing)
-                dA_row_ptr += row_size
+                dA_row = vload(Vec{S,T}, dA_col_ptr)
+                vstore(dA_row + phi[t] * ev.dPhi[c], dA_col_ptr, nothing)
+                dA_col_ptr += col_size
+            end
+        end
+    end
+
+    return dA
+end
+
+
+function pullback_dA!(
+    dA::AbstractMatrix{MultiFloat{T,N}},
+    ev::RKOCEvaluatorMFV{S,T,N},
+) where {S,T,N}
+
+    # Validate array dimensions.
+    stage_axis, _, _ = get_axes(ev)
+    @static if PERFORM_INTERNAL_BOUNDS_CHECKS
+        @assert axes(dA) == (stage_axis, stage_axis)
+    end
+
+    # Construct numeric constants.
+    _zeros = zero(MultiFloatVec{S,T,N})
+
+    # Initialize dA to zero.
+    dA_ptr = pointer(dA)
+    iota = Vec{S,Int}(ntuple(i -> (i - 1), Val{S}()))
+    dA_col_ptr = dA_ptr
+    col_size = S * sizeof(T) * N
+    for _ = 1:S
+        mfvscatter(_zeros, dA_col_ptr, iota)
+        dA_col_ptr += col_size
+    end
+
+    # Iterate over intermediate trees obtained by extension.
+    @inbounds for (k, c) in pairs(ev.table.extension_indices)
+        if c != NULL_INDEX
+            phi = ev.Phi[k]
+            dA_col_ptr = dA_ptr
+            for t = 1:S
+                dA_row = mfvgather(dA_col_ptr, iota)
+                mfvscatter(dA_row + phi[t] * ev.dPhi[c], dA_col_ptr, iota)
+                dA_col_ptr += col_size
             end
         end
     end
