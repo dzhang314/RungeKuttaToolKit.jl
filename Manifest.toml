@@ -2,7 +2,7 @@
 
 julia_version = "1.10.5"
 manifest_format = "2.0"
-project_hash = "bab3ddfe628ed2a83af26b9a5dc97f3984aa256f"
+project_hash = "46800a32946fbd180f07b29ac3f3af3228d7c200"
 
 [[deps.Artifacts]]
 uuid = "56f22d72-fd6d-98f1-02f0-08ddc0907c33"
@@ -25,9 +25,9 @@ uuid = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
 
 [[deps.MultiFloats]]
 deps = ["LinearAlgebra", "Printf", "Random", "SIMD"]
-git-tree-sha1 = "cb2770624666be381dcff375b11eee4f8836eb70"
+git-tree-sha1 = "39ffa6286f40544ecea725d8031c615e79d88d45"
 uuid = "bdf0d083-296b-4888-a5b6-7498122e68a5"
-version = "2.2.1"
+version = "2.3.0"
 
 [[deps.OpenBLAS_jll]]
 deps = ["Artifacts", "CompilerSupportLibraries_jll", "Libdl"]
@@ -60,9 +60,9 @@ version = "0.7.0"
 
 [[deps.SIMD]]
 deps = ["PrecompileTools"]
-git-tree-sha1 = "2803cab51702db743f3fda07dd1745aadfbf43bd"
+git-tree-sha1 = "98ca7c29edd6fc79cd74c61accb7010a4e7aee33"
 uuid = "fdea26ae-647d-5447-a871-4b548cad5224"
-version = "3.5.0"
+version = "3.6.0"
 
 [[deps.TOML]]
 deps = ["Dates"]

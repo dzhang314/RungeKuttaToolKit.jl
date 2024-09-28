@@ -41,7 +41,7 @@ export LevelSequence, ButcherInstruction, ButcherInstructionTable,
 
 
 using SIMD: Vec, vload, vstore, vgather
-using MultiFloats: MultiFloat, MultiFloatVec, mfvgather, mfvscatter
+using MultiFloats: MultiFloat, MultiFloatVec, mfvgather, mfvscatter, scale
 
 
 ####################################################### EVALUATOR DATA STRUCTURE
@@ -1221,6 +1221,163 @@ function (adj::RKOCOptimizationProblemAdjoint{T,E,C,P})(
     @assert length(x) == adj.prob.param.num_variables
 
     return adj(similar(x), x)
+end
+
+
+################################################################################
+
+
+export ConstrainedRKOCOptimizer
+
+
+struct ConstrainedRKOCOptimizer{T,E,P}
+    ev::E
+    param::P
+    A::Matrix{T}
+    b::Vector{T}
+    x::Vector{T}
+    lambda::Vector{T}
+    joint_residual::Vector{T}
+    constraint_residual::SubArray{T,1,Vector{T},Tuple{UnitRange{Int}},true}
+    objective_residual::SubArray{T,1,Vector{T},Tuple{UnitRange{Int}},true}
+    joint_jacobian::Matrix{T}
+    constraint_jacobian::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
+    objective_jacobian::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
+    frontier::Vector{Tuple{T,T}}
+    ipopt_vector::Vector{T}
+    ipopt_block_1::SubArray{T,1,Vector{T},Tuple{UnitRange{Int}},true}
+    ipopt_block_2::SubArray{T,1,Vector{T},Tuple{UnitRange{Int}},true}
+    ipopt_matrix::Matrix{T}
+    ipopt_block_11::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
+    ipopt_block_12::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
+    ipopt_block_21::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
+    ipopt_block_22::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
+end
+
+
+function ConstrainedRKOCOptimizer(
+    constraint_trees::AbstractVector{LevelSequence},
+    objective_trees::AbstractVector{LevelSequence},
+    param::P,
+    x::AbstractVector{T},
+) where {T,P<:AbstractRKParameterization{T}}
+
+    @assert length(x) == param.num_variables
+
+    nc = length(constraint_trees)
+    no = length(objective_trees)
+    ns = param.num_stages
+    nv = length(x)
+
+    A = Matrix{T}(undef, ns, ns)
+    b = Vector{T}(undef, ns)
+    x = copy(x)
+    param(A, b, x)
+
+    ev = RKOCEvaluator{T}(vcat(constraint_trees, objective_trees), ns)
+
+    joint_residual = Vector{T}(undef, nc + no)
+    ev(joint_residual, A, b)
+    constraint_residual = @view joint_residual[1:nc]
+    objective_residual = @view joint_residual[nc+1:nc+no]
+
+    joint_jacobian = Matrix{T}(undef, nc + no, nv)
+    param(joint_jacobian, A, b, ev, x)
+    constraint_jacobian = @view joint_jacobian[1:nc, 1:nv]
+    objective_jacobian = @view joint_jacobian[nc+1:nc+no, 1:nv]
+
+    frontier = [(
+        sum(abs2, @view joint_residual[1:nc]),
+        sum(abs2, @view joint_residual[nc+1:nc+no]))]
+
+    ipopt_vector = Vector{T}(undef, nv + nc)
+    ipopt_block_1 = @view ipopt_vector[1:nv]
+    ipopt_block_2 = @view ipopt_vector[nv+1:end]
+
+    ipopt_matrix = Matrix{T}(undef, nv + nc, nv + nc)
+    ipopt_block_11 = @view ipopt_matrix[1:nv, 1:nv]
+    ipopt_block_12 = @view ipopt_matrix[1:nv, nv+1:end]
+    ipopt_block_21 = @view ipopt_matrix[nv+1:end, 1:nv]
+    ipopt_block_22 = @view ipopt_matrix[nv+1:end, nv+1:end]
+
+    return ConstrainedRKOCOptimizer{T,RKOCEvaluator{T},P}(
+        ev, param, A, b, x, zeros(T, nc),
+        joint_residual, constraint_residual, objective_residual,
+        joint_jacobian, constraint_jacobian, objective_jacobian,
+        frontier, ipopt_vector, ipopt_block_1, ipopt_block_2, ipopt_matrix,
+        ipopt_block_11, ipopt_block_12, ipopt_block_21, ipopt_block_22)
+end
+
+
+using LinearAlgebra: mul!, ldiv!, svd!
+
+
+@inline dominates(a::Tuple{T,T}, b::Tuple{T,T}) where {T} =
+    (a[1] <= b[1]) & (a[2] <= b[2])
+
+
+function update_frontier!(
+    score::Tuple{T,T},
+    frontier::AbstractVector{Tuple{T,T}},
+) where {T}
+    if !any(dominates(point, score) for point in frontier)
+        filter!(point -> !dominates(score, point), frontier)
+        push!(frontier, score)
+        return true
+    else
+        return false
+    end
+end
+
+
+_mfbase(::Type{T}) where {T} = T
+_mfbase(::Type{MultiFloat{T,N}}) where {T,N} = T
+_mfbase(::Type{MultiFloatVec{M,T,N}}) where {M,T,N} = T
+
+
+function (opt::ConstrainedRKOCOptimizer{T,E,P})() where {T,E,P}
+
+    mul!(opt.ipopt_block_1, opt.objective_jacobian', opt.objective_residual)
+    mul!(opt.ipopt_block_1, opt.constraint_jacobian', opt.lambda, one(T), one(T))
+    copy!(opt.ipopt_block_2, opt.constraint_residual)
+
+    mul!(opt.ipopt_block_11, opt.objective_jacobian', opt.objective_jacobian)
+    copy!(opt.ipopt_block_12, opt.constraint_jacobian')
+    copy!(opt.ipopt_block_21, opt.constraint_jacobian)
+    opt.ipopt_block_22 .= zero(T)
+
+    # TODO: better non-allocating solver
+    ldiv!(svd!(opt.ipopt_matrix), opt.ipopt_vector)
+
+    _one = one(_mfbase(T))
+    _two = _one + _one
+    _half = inv(_two)
+
+    alpha = _one
+    x_trial = similar(opt.x)
+    while true
+        @simd ivdep for i in eachindex(x_trial)
+            @inbounds x_trial[i] = opt.x[i] - scale(alpha, opt.ipopt_block_1[i])
+        end
+        if all(u === v for (u, v) in zip(opt.x, x_trial))
+            return false
+        end
+        opt.param(opt.A, opt.b, x_trial)
+        opt.ev(opt.joint_residual, opt.A, opt.b)
+        score = (
+            sum(abs2, opt.constraint_residual),
+            sum(abs2, opt.objective_residual))
+        if update_frontier!(score, opt.frontier)
+            copy!(opt.x, x_trial)
+            opt.param(opt.joint_jacobian, opt.A, opt.b, opt.ev, opt.x)
+            @simd ivdep for i in eachindex(opt.lambda)
+                @inbounds opt.lambda[i] -= scale(alpha, opt.ipopt_block_2[i])
+            end
+            return true
+        else
+            alpha *= _half
+        end
+    end
 end
 
 
