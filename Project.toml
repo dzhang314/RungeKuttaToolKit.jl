@@ -1,7 +1,7 @@
 name = "RungeKuttaToolKit"
 uuid = "5ccfa5ee-da33-4844-afab-33f13f6d8736"
 authors = ["David K. Zhang <dzhang314@gmail.com>"]
-version = "3.2.0"
+version = "3.3.0"
 
 [deps]
 LinearAlgebra = "37e2e46d-f89d-539d-b4ee-838fcccc9c8e"
