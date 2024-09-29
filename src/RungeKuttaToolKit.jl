@@ -1313,6 +1313,12 @@ using LinearAlgebra: mul!, ldiv!, svd!
 
 
 function _setup_kkt_system!(opt::ConstrainedRKOCOptimizer{T,E,P}) where {T,E,P}
+    # This is a special type of linear system called a saddle point problem.
+    # Special methods for saddle point problems are described in the paper
+    # "Numerical solution of saddle point problems" by Benzi, Golub, & Liesen.
+    # Direct methods can be difficult to apply in this case because the
+    # objective and constraint Jacobians are often rank-deficient.
+    # Preconditioned conjugate gradient methods may be effective here.
     _one = one(T)
     mul!(opt.kkt_block_1, opt.objective_jacobian', opt.objective_residual)
     mul!(opt.kkt_block_1, opt.constraint_jacobian', opt.lambda, _one, _one)
