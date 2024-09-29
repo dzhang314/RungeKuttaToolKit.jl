@@ -1244,14 +1244,14 @@ struct ConstrainedRKOCOptimizer{T,E,P}
     constraint_jacobian::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
     objective_jacobian::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
     frontier::Vector{Tuple{T,T}}
-    ipopt_vector::Vector{T}
-    ipopt_block_1::SubArray{T,1,Vector{T},Tuple{UnitRange{Int}},true}
-    ipopt_block_2::SubArray{T,1,Vector{T},Tuple{UnitRange{Int}},true}
-    ipopt_matrix::Matrix{T}
-    ipopt_block_11::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
-    ipopt_block_12::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
-    ipopt_block_21::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
-    ipopt_block_22::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
+    kkt_vector::Vector{T}
+    kkt_block_1::SubArray{T,1,Vector{T},Tuple{UnitRange{Int}},true}
+    kkt_block_2::SubArray{T,1,Vector{T},Tuple{UnitRange{Int}},true}
+    kkt_matrix::Matrix{T}
+    kkt_block_11::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
+    kkt_block_12::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
+    kkt_block_21::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
+    kkt_block_22::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
 end
 
 
@@ -1290,37 +1290,37 @@ function ConstrainedRKOCOptimizer(
         sum(abs2, @view joint_residual[1:nc]),
         sum(abs2, @view joint_residual[nc+1:nc+no]))]
 
-    ipopt_vector = Vector{T}(undef, nv + nc)
-    ipopt_block_1 = @view ipopt_vector[1:nv]
-    ipopt_block_2 = @view ipopt_vector[nv+1:end]
+    kkt_vector = Vector{T}(undef, nv + nc)
+    kkt_block_1 = @view kkt_vector[1:nv]
+    kkt_block_2 = @view kkt_vector[nv+1:end]
 
-    ipopt_matrix = Matrix{T}(undef, nv + nc, nv + nc)
-    ipopt_block_11 = @view ipopt_matrix[1:nv, 1:nv]
-    ipopt_block_12 = @view ipopt_matrix[1:nv, nv+1:end]
-    ipopt_block_21 = @view ipopt_matrix[nv+1:end, 1:nv]
-    ipopt_block_22 = @view ipopt_matrix[nv+1:end, nv+1:end]
+    kkt_matrix = Matrix{T}(undef, nv + nc, nv + nc)
+    kkt_block_11 = @view kkt_matrix[1:nv, 1:nv]
+    kkt_block_12 = @view kkt_matrix[1:nv, nv+1:end]
+    kkt_block_21 = @view kkt_matrix[nv+1:end, 1:nv]
+    kkt_block_22 = @view kkt_matrix[nv+1:end, nv+1:end]
 
     return ConstrainedRKOCOptimizer{T,RKOCEvaluator{T},P}(
         ev, param, A, b, x, zeros(T, nc),
         joint_residual, constraint_residual, objective_residual,
         joint_jacobian, constraint_jacobian, objective_jacobian,
-        frontier, ipopt_vector, ipopt_block_1, ipopt_block_2, ipopt_matrix,
-        ipopt_block_11, ipopt_block_12, ipopt_block_21, ipopt_block_22)
+        frontier, kkt_vector, kkt_block_1, kkt_block_2, kkt_matrix,
+        kkt_block_11, kkt_block_12, kkt_block_21, kkt_block_22)
 end
 
 
 using LinearAlgebra: mul!, ldiv!, svd!
 
 
-function _setup_ipopt_system!(opt::ConstrainedRKOCOptimizer{T,E,P}) where {T,E,P}
+function _setup_kkt_system!(opt::ConstrainedRKOCOptimizer{T,E,P}) where {T,E,P}
     _one = one(T)
-    mul!(opt.ipopt_block_1, opt.objective_jacobian', opt.objective_residual)
-    mul!(opt.ipopt_block_1, opt.constraint_jacobian', opt.lambda, _one, _one)
-    copy!(opt.ipopt_block_2, opt.constraint_residual)
-    mul!(opt.ipopt_block_11, opt.objective_jacobian', opt.objective_jacobian)
-    copy!(opt.ipopt_block_12, opt.constraint_jacobian')
-    copy!(opt.ipopt_block_21, opt.constraint_jacobian)
-    opt.ipopt_block_22 .= zero(T)
+    mul!(opt.kkt_block_1, opt.objective_jacobian', opt.objective_residual)
+    mul!(opt.kkt_block_1, opt.constraint_jacobian', opt.lambda, _one, _one)
+    copy!(opt.kkt_block_2, opt.constraint_residual)
+    mul!(opt.kkt_block_11, opt.objective_jacobian', opt.objective_jacobian)
+    copy!(opt.kkt_block_12, opt.constraint_jacobian')
+    copy!(opt.kkt_block_21, opt.constraint_jacobian)
+    opt.kkt_block_22 .= zero(T)
     return opt
 end
 
@@ -1351,8 +1351,8 @@ _mfbase(::Type{MultiFloatVec{M,T,N}}) where {M,T,N} = T
 function (opt::ConstrainedRKOCOptimizer{T,E,P})() where {T,E,P}
 
     # TODO: better non-allocating solver
-    _setup_ipopt_system!(opt)
-    ldiv!(svd!(opt.ipopt_matrix), opt.ipopt_vector)
+    _setup_kkt_system!(opt)
+    ldiv!(svd!(opt.kkt_matrix), opt.kkt_vector)
 
     _one = one(_mfbase(T))
     _two = _one + _one
@@ -1362,7 +1362,7 @@ function (opt::ConstrainedRKOCOptimizer{T,E,P})() where {T,E,P}
     x_trial = similar(opt.x)
     while true
         @simd ivdep for i in eachindex(x_trial)
-            @inbounds x_trial[i] = opt.x[i] - scale(alpha, opt.ipopt_block_1[i])
+            @inbounds x_trial[i] = opt.x[i] - scale(alpha, opt.kkt_block_1[i])
         end
         if all(u === v for (u, v) in zip(opt.x, x_trial))
             return false
@@ -1376,7 +1376,7 @@ function (opt::ConstrainedRKOCOptimizer{T,E,P})() where {T,E,P}
             copy!(opt.x, x_trial)
             opt.param(opt.joint_jacobian, opt.A, opt.b, opt.ev, opt.x)
             @simd ivdep for i in eachindex(opt.lambda)
-                @inbounds opt.lambda[i] -= scale(alpha, opt.ipopt_block_2[i])
+                @inbounds opt.lambda[i] -= scale(alpha, opt.kkt_block_2[i])
             end
             return true
         else
