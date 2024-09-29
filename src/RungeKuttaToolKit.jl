@@ -1412,7 +1412,8 @@ function (opt::ConstrainedRKOCOptimizer{T,E,P})() where {T,E,P}
     alpha = _one
     while true
         @simd ivdep for i in eachindex(opt.x_trial)
-            @inbounds opt.x_trial[i] = opt.x[i] - scale(alpha, opt.kkt_delta_x[i])
+            @inbounds opt.x_trial[i] = opt.x[i] - scale(
+                alpha, opt.kkt_delta_x[i])
         end
         if any(isnan, opt.x_trial) || (opt.x_trial == opt.x)
             return false
@@ -1426,7 +1427,8 @@ function (opt::ConstrainedRKOCOptimizer{T,E,P})() where {T,E,P}
             copy!(opt.x, opt.x_trial)
             opt.param(opt.joint_jacobian, opt.A, opt.b, opt.ev, opt.x)
             @simd ivdep for i in eachindex(opt.lambda)
-                @inbounds opt.lambda[i] -= scale(alpha, opt.kkt_delta_lambda[i])
+                @inbounds opt.lambda[i] -= scale(
+                    alpha, opt.kkt_delta_lambda[i])
             end
             return true
         else
