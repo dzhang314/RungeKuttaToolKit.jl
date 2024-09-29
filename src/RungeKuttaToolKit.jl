@@ -1312,16 +1312,29 @@ end
 using LinearAlgebra: mul!, ldiv!, svd!
 
 
-@inline dominates(a::Tuple{T,T}, b::Tuple{T,T}) where {T} =
+function _setup_ipopt_system!(opt::ConstrainedRKOCOptimizer{T,E,P}) where {T,E,P}
+    _one = one(T)
+    mul!(opt.ipopt_block_1, opt.objective_jacobian', opt.objective_residual)
+    mul!(opt.ipopt_block_1, opt.constraint_jacobian', opt.lambda, _one, _one)
+    copy!(opt.ipopt_block_2, opt.constraint_residual)
+    mul!(opt.ipopt_block_11, opt.objective_jacobian', opt.objective_jacobian)
+    copy!(opt.ipopt_block_12, opt.constraint_jacobian')
+    copy!(opt.ipopt_block_21, opt.constraint_jacobian)
+    opt.ipopt_block_22 .= zero(T)
+    return opt
+end
+
+
+@inline _dominates(a::Tuple{T,T}, b::Tuple{T,T}) where {T} =
     (a[1] <= b[1]) & (a[2] <= b[2])
 
 
-function update_frontier!(
+function _update_frontier!(
     score::Tuple{T,T},
     frontier::AbstractVector{Tuple{T,T}},
 ) where {T}
-    if !any(dominates(point, score) for point in frontier)
-        filter!(point -> !dominates(score, point), frontier)
+    if !any(_dominates(point, score) for point in frontier)
+        filter!(point -> !_dominates(score, point), frontier)
         push!(frontier, score)
         return true
     else
@@ -1337,16 +1350,8 @@ _mfbase(::Type{MultiFloatVec{M,T,N}}) where {M,T,N} = T
 
 function (opt::ConstrainedRKOCOptimizer{T,E,P})() where {T,E,P}
 
-    mul!(opt.ipopt_block_1, opt.objective_jacobian', opt.objective_residual)
-    mul!(opt.ipopt_block_1, opt.constraint_jacobian', opt.lambda, one(T), one(T))
-    copy!(opt.ipopt_block_2, opt.constraint_residual)
-
-    mul!(opt.ipopt_block_11, opt.objective_jacobian', opt.objective_jacobian)
-    copy!(opt.ipopt_block_12, opt.constraint_jacobian')
-    copy!(opt.ipopt_block_21, opt.constraint_jacobian)
-    opt.ipopt_block_22 .= zero(T)
-
     # TODO: better non-allocating solver
+    _setup_ipopt_system!(opt)
     ldiv!(svd!(opt.ipopt_matrix), opt.ipopt_vector)
 
     _one = one(_mfbase(T))
@@ -1367,7 +1372,7 @@ function (opt::ConstrainedRKOCOptimizer{T,E,P})() where {T,E,P}
         score = (
             sum(abs2, opt.constraint_residual),
             sum(abs2, opt.objective_residual))
-        if update_frontier!(score, opt.frontier)
+        if _update_frontier!(score, opt.frontier)
             copy!(opt.x, x_trial)
             opt.param(opt.joint_jacobian, opt.A, opt.b, opt.ev, opt.x)
             @simd ivdep for i in eachindex(opt.lambda)
