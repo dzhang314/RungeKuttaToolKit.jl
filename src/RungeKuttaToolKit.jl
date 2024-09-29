@@ -1230,6 +1230,9 @@ end
 export ConstrainedRKOCOptimizer
 
 
+using LinearAlgebra: axpy!, axpby!, dot, mul!
+
+
 struct ConstrainedRKOCOptimizer{T,E,P}
     ev::E
     param::P
@@ -1244,14 +1247,20 @@ struct ConstrainedRKOCOptimizer{T,E,P}
     constraint_jacobian::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
     objective_jacobian::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
     frontier::Vector{Tuple{T,T}}
-    kkt_vector::Vector{T}
-    kkt_block_1::SubArray{T,1,Vector{T},Tuple{UnitRange{Int}},true}
-    kkt_block_2::SubArray{T,1,Vector{T},Tuple{UnitRange{Int}},true}
-    kkt_matrix::Matrix{T}
-    kkt_block_11::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
-    kkt_block_12::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
-    kkt_block_21::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
-    kkt_block_22::SubArray{T,2,Matrix{T},Tuple{UnitRange{Int},UnitRange{Int}},false}
+    x_trial::Vector{T}
+    kkt_temp::Vector{T}
+    kkt_delta::Vector{T}
+    kkt_delta_x::SubArray{T,1,Vector{T},Tuple{UnitRange{Int}},true}
+    kkt_delta_lambda::SubArray{T,1,Vector{T},Tuple{UnitRange{Int}},true}
+    kkt_residual::Vector{T}
+    kkt_residual_x::SubArray{T,1,Vector{T},Tuple{UnitRange{Int}},true}
+    kkt_residual_lambda::SubArray{T,1,Vector{T},Tuple{UnitRange{Int}},true}
+    step_direction::Vector{T}
+    step_direction_x::SubArray{T,1,Vector{T},Tuple{UnitRange{Int}},true}
+    step_direction_lambda::SubArray{T,1,Vector{T},Tuple{UnitRange{Int}},true}
+    conjugate_step_direction::Vector{T}
+    conjugate_step_direction_x::SubArray{T,1,Vector{T},Tuple{UnitRange{Int}},true}
+    conjugate_step_direction_lambda::SubArray{T,1,Vector{T},Tuple{UnitRange{Int}},true}
 end
 
 
@@ -1290,43 +1299,78 @@ function ConstrainedRKOCOptimizer(
         sum(abs2, @view joint_residual[1:nc]),
         sum(abs2, @view joint_residual[nc+1:nc+no]))]
 
-    kkt_vector = Vector{T}(undef, nv + nc)
-    kkt_block_1 = @view kkt_vector[1:nv]
-    kkt_block_2 = @view kkt_vector[nv+1:end]
-
-    kkt_matrix = Matrix{T}(undef, nv + nc, nv + nc)
-    kkt_block_11 = @view kkt_matrix[1:nv, 1:nv]
-    kkt_block_12 = @view kkt_matrix[1:nv, nv+1:end]
-    kkt_block_21 = @view kkt_matrix[nv+1:end, 1:nv]
-    kkt_block_22 = @view kkt_matrix[nv+1:end, nv+1:end]
+    x_trial = Vector{T}(undef, nv)
+    kkt_temp = Vector{T}(undef, no)
+    kkt_delta = Vector{T}(undef, nv + nc)
+    kkt_delta_x = @view kkt_delta[1:nv]
+    kkt_delta_lambda = @view kkt_delta[nv+1:end]
+    kkt_residual = Vector{T}(undef, nv + nc)
+    kkt_residual_x = @view kkt_residual[1:nv]
+    kkt_residual_lambda = @view kkt_residual[nv+1:end]
+    step_direction = Vector{T}(undef, nv + nc)
+    step_direction_x = @view step_direction[1:nv]
+    step_direction_lambda = @view step_direction[nv+1:end]
+    conjugate_step_direction = Vector{T}(undef, nv + nc)
+    conjugate_step_direction_x = @view conjugate_step_direction[1:nv]
+    conjugate_step_direction_lambda = @view conjugate_step_direction[nv+1:end]
 
     return ConstrainedRKOCOptimizer{T,RKOCEvaluator{T},P}(
         ev, param, A, b, x, zeros(T, nc),
         joint_residual, constraint_residual, objective_residual,
         joint_jacobian, constraint_jacobian, objective_jacobian,
-        frontier, kkt_vector, kkt_block_1, kkt_block_2, kkt_matrix,
-        kkt_block_11, kkt_block_12, kkt_block_21, kkt_block_22)
+        frontier, x_trial, kkt_temp,
+        kkt_delta, kkt_delta_x, kkt_delta_lambda,
+        kkt_residual, kkt_residual_x, kkt_residual_lambda,
+        step_direction, step_direction_x, step_direction_lambda,
+        conjugate_step_direction, conjugate_step_direction_x,
+        conjugate_step_direction_lambda)
 end
 
 
-using LinearAlgebra: mul!, ldiv!, svd!
-
-
-function _setup_kkt_system!(opt::ConstrainedRKOCOptimizer{T,E,P}) where {T,E,P}
-    # This is a special type of linear system called a saddle point problem.
-    # Special methods for saddle point problems are described in the paper
-    # "Numerical solution of saddle point problems" by Benzi, Golub, & Liesen.
-    # Direct methods can be difficult to apply in this case because the
-    # objective and constraint Jacobians are often rank-deficient.
-    # Preconditioned conjugate gradient methods may be effective here.
+function _kkt_mul!(
+    opt::ConstrainedRKOCOptimizer{T,E,P},
+    w_x::AbstractVector{T},
+    w_lambda::AbstractVector{T},
+    v_x::AbstractVector{T},
+    v_lambda::AbstractVector{T},
+) where {T,E,P}
     _one = one(T)
-    mul!(opt.kkt_block_1, opt.objective_jacobian', opt.objective_residual)
-    mul!(opt.kkt_block_1, opt.constraint_jacobian', opt.lambda, _one, _one)
-    copy!(opt.kkt_block_2, opt.constraint_residual)
-    mul!(opt.kkt_block_11, opt.objective_jacobian', opt.objective_jacobian)
-    copy!(opt.kkt_block_12, opt.constraint_jacobian')
-    copy!(opt.kkt_block_21, opt.constraint_jacobian)
-    opt.kkt_block_22 .= zero(T)
+    mul!(opt.kkt_temp, opt.objective_jacobian, v_x)
+    mul!(w_x, opt.objective_jacobian', opt.kkt_temp)
+    mul!(w_x, opt.constraint_jacobian', v_lambda, _one, _one)
+    mul!(w_lambda, opt.constraint_jacobian, v_x)
+    return opt
+end
+
+
+function _kkt_solve!(opt::ConstrainedRKOCOptimizer{T,E,P}) where {T,E,P}
+    _zero = zero(T)
+    _one = one(T)
+
+    opt.kkt_delta .= _zero
+    mul!(opt.kkt_residual_x, opt.objective_jacobian', opt.objective_residual)
+    mul!(opt.kkt_residual_x, opt.constraint_jacobian', opt.lambda, _one, _one)
+    copy!(opt.kkt_residual_lambda, opt.constraint_residual)
+    copy!(opt.step_direction, opt.kkt_residual)
+    r_norm2 = dot(opt.kkt_residual, opt.kkt_residual)
+
+    while true
+        _kkt_mul!(opt, opt.conjugate_step_direction_x,
+            opt.conjugate_step_direction_lambda,
+            opt.step_direction_x, opt.step_direction_lambda)
+        step_size = r_norm2 / dot(opt.step_direction,
+            opt.conjugate_step_direction)
+        axpy!(step_size, opt.step_direction, opt.kkt_delta)
+        axpy!(-step_size, opt.conjugate_step_direction, opt.kkt_residual)
+        r_norm2_new = dot(opt.kkt_residual, opt.kkt_residual)
+        if !(r_norm2_new < r_norm2)
+            break
+        end
+        axpby!(_one, opt.kkt_residual,
+            r_norm2_new / r_norm2, opt.step_direction)
+        r_norm2 = r_norm2_new
+    end
+
     return opt
 end
 
@@ -1356,30 +1400,27 @@ _mfbase(::Type{MultiFloatVec{M,T,N}}) where {M,T,N} = T
 
 function (opt::ConstrainedRKOCOptimizer{T,E,P})() where {T,E,P}
 
-    # TODO: better non-allocating solver
-    _setup_kkt_system!(opt)
-    ldiv!(svd!(opt.kkt_matrix), opt.kkt_vector)
-
     _one = one(_mfbase(T))
     _two = _one + _one
     _half = inv(_two)
 
+    _kkt_solve!(opt)
+
     alpha = _one
-    x_trial = similar(opt.x)
     while true
-        @simd ivdep for i in eachindex(x_trial)
-            @inbounds x_trial[i] = opt.x[i] - scale(alpha, opt.kkt_block_1[i])
+        @simd ivdep for i in eachindex(opt.x_trial)
+            @inbounds opt.x_trial[i] = opt.x[i] - scale(alpha, opt.kkt_delta_x[i])
         end
-        if all(u === v for (u, v) in zip(opt.x, x_trial))
+        if any(isnan, opt.x_trial) || (opt.x_trial == opt.x)
             return false
         end
-        opt.param(opt.A, opt.b, x_trial)
+        opt.param(opt.A, opt.b, opt.x_trial)
         opt.ev(opt.joint_residual, opt.A, opt.b)
         score = (
             sum(abs2, opt.constraint_residual),
             sum(abs2, opt.objective_residual))
         if _update_frontier!(score, opt.frontier)
-            copy!(opt.x, x_trial)
+            copy!(opt.x, opt.x_trial)
             opt.param(opt.joint_jacobian, opt.A, opt.b, opt.ev, opt.x)
             @simd ivdep for i in eachindex(opt.lambda)
                 @inbounds opt.lambda[i] -= scale(alpha, opt.kkt_block_2[i])
