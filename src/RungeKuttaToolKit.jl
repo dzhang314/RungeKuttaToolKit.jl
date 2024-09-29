@@ -1423,7 +1423,7 @@ function (opt::ConstrainedRKOCOptimizer{T,E,P})() where {T,E,P}
             copy!(opt.x, opt.x_trial)
             opt.param(opt.joint_jacobian, opt.A, opt.b, opt.ev, opt.x)
             @simd ivdep for i in eachindex(opt.lambda)
-                @inbounds opt.lambda[i] -= scale(alpha, opt.kkt_block_2[i])
+                @inbounds opt.lambda[i] -= scale(alpha, opt.kkt_delta_lambda[i])
             end
             return true
         else
