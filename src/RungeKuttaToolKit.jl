@@ -1354,12 +1354,15 @@ function _kkt_solve!(opt::ConstrainedRKOCOptimizer{T,E,P}) where {T,E,P}
     copy!(opt.step_direction, opt.kkt_residual)
     r_norm2 = dot(opt.kkt_residual, opt.kkt_residual)
 
-    while true
+    while !iszero(r_norm2)
         _kkt_mul!(opt, opt.conjugate_step_direction_x,
             opt.conjugate_step_direction_lambda,
             opt.step_direction_x, opt.step_direction_lambda)
-        step_size = r_norm2 / dot(opt.step_direction,
-            opt.conjugate_step_direction)
+        step_norm = dot(opt.step_direction, opt.conjugate_step_direction)
+        if iszero(step_norm)
+            break
+        end
+        step_size = r_norm2 / step_norm
         axpy!(step_size, opt.step_direction, opt.kkt_delta)
         axpy!(-step_size, opt.conjugate_step_direction, opt.kkt_residual)
         r_norm2_new = dot(opt.kkt_residual, opt.kkt_residual)
