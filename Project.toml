@@ -11,6 +11,8 @@ SIMD = "fdea26ae-647d-5447-a871-4b548cad5224"
 
 [compat]
 julia = "1.0"
+MultiFloats = "2.0"
+SIMD = "3.0"
 
 [extras]
 OffsetArrays = "6fe1bfb0-de20-5000-8ca7-80f57d26f881"
