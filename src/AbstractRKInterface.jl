@@ -467,6 +467,24 @@ function (adj::AbstractRKOCAdjoint{T})(
 end
 
 
+function (ev::AbstractRKOCEvaluator{T})(
+    param::AbstractRKParameterization{T},
+    x::AbstractVector{T},
+) where {T}
+
+    # Validate array dimensions.
+    stage_axis, _, output_axis = get_axes(ev)
+    @assert stage_axis == Base.OneTo(param.num_stages)
+    variable_axis = Base.OneTo(param.num_variables)
+    @assert axes(x) == (variable_axis,)
+
+    A = similar(Matrix{T}, stage_axis, stage_axis)
+    b = similar(Vector{T}, stage_axis)
+    param(A, b, x)
+    return ev(A, b)
+end
+
+
 function (adj::AbstractRKOCAdjoint{T})(
     param::AbstractRKParameterization{T},
     x::AbstractVector{T},
